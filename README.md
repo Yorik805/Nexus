@@ -52,6 +52,7 @@ Nexus/
 ├── models/
 ├── temp/
 │
+├──tests/
 └── docs/
 ```
 
