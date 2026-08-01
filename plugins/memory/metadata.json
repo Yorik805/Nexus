@@ -1,0 +1,9 @@
+{
+  "name": "memory",
+  "version": "0.1.0",
+  "description": "Modular memory plugin for the Nexus Personal AI Operating System.",
+  "entrypoint": "execute.py",
+  "actions": ["WRITE", "SEARCH", "UPDATE", "DELETE", "GET", "LIST"],
+  "language": "python",
+  "minimum_python": "3.12"
+}
