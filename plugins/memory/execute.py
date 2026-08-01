@@ -19,7 +19,7 @@ _SUPPORTED_ACTIONS = {
     "UPDATE": update_module.update,
     "DELETE": delete_module.delete,
     "GET": get_module.get,
-    "LIST": list_module.list,
+    "LIST": list_module.list_memories,
 }
 
 

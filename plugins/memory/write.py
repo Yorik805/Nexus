@@ -10,30 +10,14 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from typing import Any
+
+from .database import DATABASE_PATH, ensure_database_ready
 
 
 # Predefined categories to ensure consistent taxonomy and avoid typos.
 VALID_CATEGORIES = {"PROJECT", "PERSON", "IDEA", "PREFERENCE"}
-
-# Database path relative to this module.
-_DATABASE_PATH = Path(__file__).resolve().parent / "database" / "memory.db"
-
-# The table must be created automatically if missing.
-_CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS memories (
-    memory_id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    category TEXT NOT NULL,
-    content TEXT NOT NULL,
-    tags TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    version INTEGER NOT NULL
-);
-"""
 
 
 def _get_timestamp() -> str:
@@ -62,17 +46,9 @@ def _validate_tags(payload: dict) -> tuple[bool, list[str] | str]:
     return True, normalized_tags
 
 
-def _ensure_database_ready() -> None:
-    """Ensure the database directory and table exist."""
-    _DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(_DATABASE_PATH) as connection:
-        connection.executescript(_CREATE_TABLE_SQL)
-        connection.commit()
-
-
 def _insert_memory(record: dict[str, Any]) -> None:
     """Insert a validated memory record into the SQLite database."""
-    with sqlite3.connect(_DATABASE_PATH) as connection:
+    with sqlite3.connect(DATABASE_PATH) as connection:
         cursor = connection.cursor()
         cursor.execute(
             """
@@ -170,14 +146,14 @@ def write(data: dict) -> dict:
     }
 
     try:
-        _ensure_database_ready()
+        ensure_database_ready()
         _insert_memory(record)
-    except sqlite3.Error as exc:
+    except sqlite3.Error:
         return _build_response(
             "ERROR",
             "Failed to store memory in the database.",
         )
-    except Exception as exc:
+    except Exception:
         return _build_response(
             "ERROR",
             "Unexpected error while storing memory.",

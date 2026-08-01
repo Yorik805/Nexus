@@ -7,11 +7,9 @@ lightweight results without full content payload.
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 from typing import Any
 
-
-_DATABASE_PATH = Path(__file__).resolve().parent / "database" / "memory.db"
+from .database import DATABASE_PATH, ensure_database_ready
 
 
 def _build_response(status: str, message: str, data: dict | None = None) -> dict:
@@ -47,6 +45,10 @@ def _validate_search_payload(data: dict) -> tuple[bool, str, dict[str, Any]]:
             normalized_tags.append(tag.strip())
         tags = normalized_tags
 
+    include_deleted = data.get("include_deleted")
+    if include_deleted is not None and not isinstance(include_deleted, bool):
+        return False, "include_deleted must be a boolean or null.", {}
+
     limit = data.get("limit")
     if limit is None:
         limit = 10
@@ -58,6 +60,7 @@ def _validate_search_payload(data: dict) -> tuple[bool, str, dict[str, Any]]:
         "category": category,
         "tags": tags,
         "limit": limit,
+        "include_deleted": bool(include_deleted),
     }
 
 
@@ -65,12 +68,14 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _ensure_database_directory() -> None:
-    _DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _search_memories(query: str, category: str | None, tags: list[str] | None, limit: int) -> list[dict[str, Any]]:
-    _ensure_database_directory()
+def _search_memories(
+    query: str,
+    category: str | None,
+    tags: list[str] | None,
+    include_deleted: bool,
+    limit: int,
+) -> list[dict[str, Any]]:
+    ensure_database_ready()
     like_pattern = f"%{_escape_like(query)}%"
 
     sql = [
@@ -90,6 +95,9 @@ def _search_memories(query: str, category: str | None, tags: list[str] | None, l
             sql.append("AND tags LIKE ? ESCAPE '\\'")
             params.append(f"%\"{escaped_tag}\"%")
 
+    if not include_deleted:
+        sql.append("AND (deleted = 0 OR deleted IS NULL)")
+
     sql.append("ORDER BY created_at DESC")
     sql.append("LIMIT ?")
     params.append(limit)
@@ -97,7 +105,7 @@ def _search_memories(query: str, category: str | None, tags: list[str] | None, l
     query_sql = " ".join(sql)
 
     try:
-        with sqlite3.connect(_DATABASE_PATH) as connection:
+        with sqlite3.connect(DATABASE_PATH) as connection:
             connection.row_factory = sqlite3.Row
             cursor = connection.cursor()
             cursor.execute(query_sql, params)
@@ -118,6 +126,7 @@ def search(data: dict) -> dict:
         normalized["query"],
         normalized["category"],
         normalized["tags"],
+        normalized["include_deleted"],
         normalized["limit"],
     )
 
