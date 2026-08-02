@@ -99,6 +99,8 @@ The AI itself is only one component of the operating system.
 * [ ] Vision System
 * [ ] Automation Engine
 
+For a more detailed development roadmap, see [TODO.md](TODO.md).
+
 ---
 
 This project is currently under active development.
