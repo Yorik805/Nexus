@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..database import DATABASE_PATH, ensure_database_ready
+from ..vector_store import upsert_memory
 
 
 # Predefined categories to ensure consistent taxonomy and avoid typos.
@@ -148,6 +149,21 @@ def write(data: dict) -> dict:
     try:
         ensure_database_ready()
         _insert_memory(record)
+        # create vector entry (best-effort)
+        try:
+            document = f"{record['title']}\n{record['content']}"
+            metadata = {
+                "memory_id": record["memory_id"],
+                "title": record["title"],
+                "category": record["category"],
+                "created_at": record["created_at"],
+                "version": record["version"],
+                "deleted": False,
+            }
+            upsert_memory(record["memory_id"], document, metadata)
+        except Exception:
+            # Vector store is optional; do not fail the write because of embedding issues
+            pass
     except sqlite3.Error:
         return _build_response(
             "ERROR",

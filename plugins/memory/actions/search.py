@@ -24,6 +24,14 @@ def _validate_search_payload(data: dict) -> tuple[bool, str, dict[str, Any]]:
     if not isinstance(data, dict):
         return False, "SEARCH requires a dictionary payload.", {}
 
+    # 'type' is required and selects SQLITE or VECTOR search
+    search_type = data.get("type")
+    if not isinstance(search_type, str) or not search_type.strip():
+        return False, "type must be a non-empty string and be 'SQLITE' or 'VECTOR'.", {}
+    search_type = search_type.strip().upper()
+    if search_type not in {"SQLITE", "VECTOR"}:
+        return False, "type must be 'SQLITE' or 'VECTOR'.", {}
+
     query = data.get("query")
     if not isinstance(query, str) or not query.strip():
         return False, "query must be a non-empty string.", {}
@@ -56,6 +64,7 @@ def _validate_search_payload(data: dict) -> tuple[bool, str, dict[str, Any]]:
         return False, "limit must be a positive integer or null.", {}
 
     return True, "", {
+        "type": search_type,
         "query": query.strip(),
         "category": category,
         "tags": tags,
@@ -121,27 +130,42 @@ def search(data: dict) -> dict:
     is_valid, error_message, normalized = _validate_search_payload(data)
     if not is_valid:
         return _build_response("ERROR", error_message)
-
-    results = _search_memories(
-        normalized["query"],
-        normalized["category"],
-        normalized["tags"],
-        normalized["include_deleted"],
-        normalized["limit"],
-    )
-
-    if not results:
-        return _build_response(
-            "SUCCESS",
-            "No matching memories found.",
-            {"results": []},
+    # Delegate based on requested search type
+    if normalized["type"] == "SQLITE":
+        results = _search_memories(
+            normalized["query"],
+            normalized["category"],
+            normalized["tags"],
+            normalized["include_deleted"],
+            normalized["limit"],
         )
+        if not results:
+            return _build_response("SUCCESS", "No matching memories found.", {"results": []})
+        return _build_response("SUCCESS", f"Found {len(results)} matching memories.", {"results": results})
 
-    return _build_response(
-        "SUCCESS",
-        f"Found {len(results)} matching memories.",
-        {"results": results},
-    )
+    # VECTOR search
+    try:
+        from ..vector_store import query_vector
+
+        vector_results = query_vector(normalized["query"], limit=normalized["limit"], include_deleted=normalized["include_deleted"])  # type: ignore
+        # Map vector results to lightweight result format
+        mapped: list[dict[str, Any]] = []
+        for entry in vector_results:
+            mapped.append(
+                {
+                    "memory_id": entry.get("memory_id"),
+                    "title": entry.get("title"),
+                    "category": entry.get("category"),
+                    "created_at": entry.get("created_at"),
+                }
+            )
+        if not mapped:
+            return _build_response("SUCCESS", "No matching memories found.", {"results": []})
+        return _build_response("SUCCESS", f"Found {len(mapped)} matching memories.", {"results": mapped})
+    except ImportError:
+        return _build_response("ERROR", "Vector search requested but dependencies are not installed.")
+    except Exception as exc:
+        return _build_response("ERROR", f"Failed to perform vector search: {exc}")
 
 
 # TODO:

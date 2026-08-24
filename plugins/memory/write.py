@@ -15,11 +15,11 @@ from typing import Any
 
 from .database import DATABASE_PATH, ensure_database_ready
 
-
+  
 # Predefined categories to ensure consistent taxonomy and avoid typos.
 VALID_CATEGORIES = {"PROJECT", "PERSON", "IDEA", "PREFERENCE"}
 
-
+    
 def _get_timestamp() -> str:
     """Return the current UTC timestamp in ISO 8601 format."""
     return datetime.now(timezone.utc).isoformat()

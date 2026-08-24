@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..database import DATABASE_PATH, ensure_database_ready
+from ..vector_store import upsert_memory
 
 VALID_CATEGORIES = {"PROJECT", "PERSON", "IDEA", "PREFERENCE"}
 
@@ -183,6 +184,31 @@ def update(data: dict) -> dict:
             "Failed to update memory.",
         )
 
+    # If title or content changed, update vector entry (best-effort)
+    if "title" in update_values or "content" in update_values:
+        try:
+            # fetch full record to construct document
+            with sqlite3.connect(DATABASE_PATH) as connection:
+                connection.row_factory = sqlite3.Row
+                cursor = connection.cursor()
+                cursor.execute(
+                    "SELECT title, content, category, created_at, version FROM memories WHERE memory_id = ?",
+                    (memory_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    doc = f"{row['title']}\n{row['content']}"
+                    metadata = {
+                        "memory_id": memory_id,
+                        "title": row["title"],
+                        "category": row["category"],
+                        "created_at": row["created_at"],
+                        "version": row["version"],
+                        "deleted": False,
+                    }
+                    upsert_memory(memory_id, doc, metadata)
+        except Exception:
+            pass
     return _build_response(
         "SUCCESS",
         "Memory updated successfully.",

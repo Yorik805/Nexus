@@ -57,7 +57,7 @@ def test_foreground_execution() -> None:
         data = response["data"]
         assert data["exit_code"] == 0
         assert "PWD=" in data["stdout"]
-        assert Path(temp_dir).as_posix() in data["stdout"]
+        assert Path(temp_dir).as_posix() in data["stdout"].replace("\\", "/")
 
 
 def test_invalid_command() -> None:

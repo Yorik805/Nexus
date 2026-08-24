@@ -1,0 +1,31 @@
+{
+  "server": {
+    "host": "100.118.250.51",
+    "port": null,
+    "protocol": "http",
+    "timeout_seconds": 30
+  },
+  "device": {
+    "device_id": "laptop_1",
+    "device_type": "laptop"
+  },
+  "stt": {
+    "enabled": true,
+    "model": "small",
+    "device_preference": "AUTO",
+    "compute_type": "float16",
+    "language": "en"
+  },
+  "tts": {
+    "enabled": true,
+    "rate": 175,
+    "volume": 1.0
+  },
+  "recording": {
+    "microphone_device": null,
+    "sample_rate": 16000,
+    "recording_seconds": 30,
+    "silence_timeout_seconds": 1.2,
+    "silence_threshold": 0.01
+  }
+}

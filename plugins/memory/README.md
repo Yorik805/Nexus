@@ -8,6 +8,7 @@ It provides a structured way to store, search, update, and manage memories with 
 
 - **WRITE** — Store a new memory
 - **SEARCH** — Find memories by query, category, or tags
+    - Supports two search types: `SQLITE` (existing) and `VECTOR` (semantic search using embeddings)
 - **GET** — Retrieve a complete memory record
 - **UPDATE** — Modify an existing memory
 - **DELETE** — Soft delete a memory
@@ -63,6 +64,21 @@ The database schema includes:
 - `version` — Integer version counter
 - `deleted` — Soft delete flag
 - `deleted_at` — Deletion timestamp (for auditing)
+
+## Vector Search (NEW in v2)
+
+Memory Plugin v2 adds optional semantic vector search using ChromaDB and sentence-transformers.
+
+- `type` field on `SEARCH` requests must be set to `SQLITE` or `VECTOR`.
+- `VECTOR` search stores embeddings at write time and updates them on content/title updates.
+- Embeddings are persisted under `plugins/memory/database/chroma` so they survive restarts.
+- To enable vector search, install dependencies:
+
+```bash
+pip install chromadb sentence-transformers
+```
+
+Use `SQLITE` for exact title/tags/category queries and `VECTOR` for natural language semantic queries.
 
 ## Plugin Standard
 

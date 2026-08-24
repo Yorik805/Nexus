@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from ..database import DATABASE_PATH, ensure_database_ready
+from ..vector_store import mark_deleted
 
 
 def _build_response(status: str, message: str, data: dict | None = None) -> dict:
@@ -49,5 +50,11 @@ def delete(data: dict) -> dict:
             connection.commit()
     except sqlite3.Error:
         return _build_response("ERROR", "Failed to delete memory in the database.")
+
+    # mark vector metadata as deleted (best-effort)
+    try:
+        mark_deleted(memory_id, True)
+    except Exception:
+        pass
 
     return _build_response("SUCCESS", "Memory deleted successfully.", {"memory_id": memory_id})

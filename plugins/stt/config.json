@@ -1,0 +1,10 @@
+{
+  "preferred_device": "AUTO",
+  "model_name": "nexus/stt-base",
+  "compute_type": "float16",
+  "language": "en",
+  "beam_size": 5,
+  "vad_enabled": false,
+  "max_audio_length_seconds": 60,
+  "sample_rate": 16000
+}

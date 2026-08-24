@@ -129,7 +129,7 @@ Every response uses the standard Nexus response shape.
 
 ```json
 {
-  "status": "SUCCESS",
+  "status": "Failed",
   "message": "Process stop requested.",
   "data": {
     "process_id": "...",
