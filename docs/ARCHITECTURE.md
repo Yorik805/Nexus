@@ -9,7 +9,7 @@ Nexus/
 ├── README.md
 ├── CHANGELOG.md
 ├── TODO.md
-├── main.py                  # official runtime entry point (new in Phase 1)
+├── main.py                  # official runtime entry point
 ├── .gitignore
 ├── .venv/
 ├── __pycache__/
@@ -89,6 +89,24 @@ Nexus/
 └── .pytest_cache/
 ```
 
+Phase 2 adds the following replaceable intelligence and execution boundaries:
+
+```text
+Nexus/
+├── orchestrators/
+│   ├── base.py              # typed orchestrator contracts
+│   ├── dummy.py             # deterministic default brain
+│   ├── groq.py              # future Groq implementation slot
+│   ├── local.py             # future local-model implementation slot
+│   ├── prompt_loader.py     # versioned prompt composition
+│   └── prompts/             # editable system/developer/schema instructions
+└── runtime/
+	├── core.py              # event loop and integration flow
+	├── registry.py           # plugin metadata and action discovery
+	├── validator.py          # execution-plan structural validation
+	└── router.py             # sequential plugin execution
+```
+
 ## 2. Existing components and responsibilities
 
 ### Root-level documents
@@ -102,6 +120,15 @@ Nexus/
 - plugins/filesystem: CRUD and metadata operations for local files and directories.
 - plugins/terminal: managed command execution and process lifecycle control.
 - plugins/stt: speech-to-text foundation including hardware detection, model loading, and transcription support.
+
+### Phase 2 orchestration layer
+- orchestrators/base.py: standard `OrchestratorContext`, `OrchestratorResult`, `ActionRequest`, `BackgroundTaskRequest`, and `ResponseRequest` models plus the abstract `Orchestrator.process()` interface.
+- orchestrators/dummy.py: default deterministic brain. It creates responses and only creates actions explicitly supplied by a caller for deterministic tests.
+- orchestrators/groq.py and orchestrators/local.py: documented implementation slots that intentionally do not call a model yet.
+- orchestrators/prompt_loader.py and orchestrators/prompts/: version-controlled, readable instruction sources. Runtime metadata can be appended without embedding a large prompt in Python code.
+- runtime/registry.py: discovers plugin action names from each plugin's existing `_SUPPORTED_ACTIONS` map and exposes metadata to the validator and future brains.
+- runtime/validator.py: checks plan structure, plugin/action references, action data, duplicate IDs, and simple dependencies. It returns valid actions separately when invalid actions are present and reports a `PARTIAL_PLAN` warning.
+- runtime/router.py: calls only approved plugin actions in declared sequential order. It converts plugin exceptions and malformed responses into structured action results and continues with independent actions.
 
 ### Client and device boundary
 - assets/client/nexus_connection.py: HTTP client used by voice/client code to register devices and send user messages to a Nexus server.
@@ -117,15 +144,19 @@ Nexus/
 
 ## 3. Existing entry points
 
-The current repository does not yet have a single, authoritative runtime entry point.
+The authoritative runtime entry point is `main.py`:
 
-Existing entry points include:
-- assets/voice_client.py with a CLI entry point via `main()`.
+```bash
+e:/Nexus/.venv/Scripts/python.exe main.py
+```
+
+Other entry points include:
+- assets/voice_client.py with a client CLI entry point via `main()`.
 - semantic_search_demo.py and filesystem_quickstart.py as developer/test scripts.
 - plugin-level `execute()` entry points under each plugin package.
 - tests and notebooks used during development and debugging.
 
-This is part of the architectural confusion: there is no single runtime process that represents the always-running Nexus service.
+The voice client remains a client boundary and is not connected directly to the Phase 2 orchestrator.
 
 ## 4. Existing plugins
 
@@ -200,9 +231,17 @@ Nexus/
 ├── main.py                  # official runtime entry point
 ├── runtime/
 │   ├── __init__.py
-│   ├── core.py              # Event, Queue, Runtime, ContextBuilder, Orchestrator
-│   ├── registry.py          # minimal plugin registry
-│   └── docs/
+│   ├── core.py
+│   ├── registry.py
+│   ├── validator.py
+│   └── router.py
+├── orchestrators/
+│   ├── base.py
+│   ├── dummy.py
+│   ├── groq.py
+│   ├── local.py
+│   ├── prompt_loader.py
+│   └── prompts/
 ├── plugins/
 │   ├── memory/
 │   ├── filesystem/
@@ -252,4 +291,58 @@ Recommended safe changes for Phase 1 and beyond:
 
 The current repo is best described as an early plugin system with a strong conceptual model but without a real runtime loop. The safe and correct next step is to add a minimal runtime layer that handles events, creates context, invokes a dummy orchestrator, and leaves the plugin system intact.
 
-This matches the Phase 1 goal: establish event-driven structure without inventing the final LLM orchestration layer.
+This matches the Phase 1 goal and the Phase 2 goal: establish event-driven structure and a replaceable brain/body boundary without implementing a real LLM.
+
+## 11. Orchestrator contract
+
+Every brain receives an `OrchestratorContext` containing:
+
+- event
+- user context
+- retrieved memories
+- working context
+- active tasks
+- system context
+
+It returns an `OrchestratorResult` containing status, response metadata, plugin `ActionRequest` items, background task declarations, concise metadata, and an optional structured error. The runtime depends on the abstract `Orchestrator` interface, not on Dummy, Groq, or Local implementations.
+
+An action contains an ID, plugin name, plugin action, dictionary data, and optional `depends_on` IDs. This supports future multi-step plans without introducing a general workflow engine in Phase 2.
+
+## 12. Validator behavior
+
+`ExecutionPlanValidator` is structural validation, not a policy or censorship layer. It verifies registered plugins, discovered actions, required fields, dictionary data, unique IDs, and dependency references. Invalid actions are rejected individually where possible. Valid actions remain in `approved_plan`, while errors identify rejected actions and a `PARTIAL_PLAN` warning explains the result.
+
+## 13. Plugin registry and router
+
+`PluginRegistry` discovers action names from each plugin's existing `_SUPPORTED_ACTIONS` mapping, while preserving the public `execute(request)` entry point. Its metadata includes plugin name, actions, entry point, description, and optional version.
+
+`PluginRouter` executes approved actions sequentially in declared order. It waits for dependency IDs to succeed, records structured results with the original action ID, and continues independent actions after plugin errors. Parallel execution, task scheduling, and policy confirmation are intentionally outside this phase.
+
+## 14. Runtime execution flow
+
+```text
+Event
+	-> ContextBuilder
+	-> Orchestrator.process(context)
+	-> ExecutionPlanValidator
+	-> PluginRouter
+	-> plugin.execute({action, data})
+	-> structured Runtime result
+```
+
+The runtime result contains `event_id`, `orchestrator_result`, `validation_result`, `execution_results`, `response`, and an overall status. The default Dummy brain produces no actions. Deterministic actions can be injected into it for tests without making normal runtime events execute system operations.
+
+## 15. System instructions and future brains
+
+System, developer, and schema instructions live in `orchestrators/prompts/` and are loaded through `build_system_instruction()`. Runtime information such as available plugin metadata, device information, memories, and active tasks can be appended as structured JSON. A future Groq or local implementation can load these instructions, call its model, parse an `OrchestratorResult`, and be passed to `NexusRuntime(orchestrator=...)` without changing the event queue, validator, router, or plugins.
+
+## 16. Adding an orchestrator implementation
+
+Add a class under `orchestrators/` that subclasses `Orchestrator` and implements:
+
+```python
+def process(self, context: OrchestratorContext) -> OrchestratorResult:
+		...
+```
+
+The implementation should return typed structured data, avoid direct plugin calls, and leave execution to the runtime's validator and router. No separate Conversation AI is required.

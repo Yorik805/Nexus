@@ -19,13 +19,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_shutdown)
     signal.signal(signal.SIGTERM, _handle_shutdown)
 
-    print("Nexus Runtime starting...")
-    print("Loading configuration...")
-    print("Loading plugin registry...")
-    print("Starting event system...")
     runtime.start()
-    print("Nexus is online.")
-    print("Waiting for events...")
 
     try:
         while runtime.is_running:

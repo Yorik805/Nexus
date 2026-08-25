@@ -7,6 +7,12 @@ from datetime import datetime, timezone
 from queue import Empty, Queue
 from typing import Any
 
+from orchestrators import DummyOrchestrator, Orchestrator, OrchestratorContext
+
+from .registry import PluginRegistry
+from .router import PluginRouter
+from .validator import ExecutionPlanValidator
+
 VALID_EVENT_TYPES = {
     "USER_MESSAGE",
     "SYSTEM_EVENT",
@@ -90,29 +96,6 @@ class EventQueue:
         self._queue.task_done()
 
 
-class PluginRegistry:
-    """Minimal plugin registry for the first runtime pass."""
-
-    def __init__(self) -> None:
-        self._plugins: dict[str, Any] = {}
-        self.register("memory", self._load_plugin("plugins.memory"))
-        self.register("filesystem", self._load_plugin("plugins.filesystem"))
-        self.register("terminal", self._load_plugin("plugins.terminal"))
-
-    def _load_plugin(self, module_name: str) -> Any:
-        module = __import__(module_name, fromlist=["execute"])
-        return getattr(module, "execute", None)
-
-    def register(self, name: str, handler: Any) -> None:
-        self._plugins[str(name).lower()] = handler
-
-    def get_plugin(self, name: str) -> Any:
-        return self._plugins.get(str(name).lower())
-
-    def list_plugins(self) -> list[str]:
-        return sorted(self._plugins)
-
-
 class ContextBuilder:
     """Placeholder context builder for the runtime contract."""
 
@@ -129,29 +112,17 @@ class ContextBuilder:
         }
 
 
-class DummyOrchestrator:
-    """Placeholder orchestrator for event-driven runtime validation."""
-
-    def handle(self, event: Event, context: dict[str, Any]) -> dict[str, Any]:
-        if event.type == "USER_MESSAGE":
-            response_text = "Dummy orchestrator received your message."
-        else:
-            response_text = "Dummy orchestrator processed a non-user event."
-
-        return {
-            "status": "SUCCESS",
-            "event_id": event.event_id,
-            "actions": [],
-            "response": {"text": response_text},
-            "context": context,
-        }
-
-
 class NexusRuntime:
     """Minimal always-on runtime that waits for events and processes them."""
 
-    def __init__(self, plugin_registry: PluginRegistry | None = None) -> None:
+    def __init__(
+        self,
+        plugin_registry: PluginRegistry | None = None,
+        orchestrator: Orchestrator | None = None,
+    ) -> None:
         self.registry = plugin_registry or PluginRegistry()
+        self.router = PluginRouter(self.registry)
+        self.validator = ExecutionPlanValidator(self.registry)
         self.queue = EventQueue()
         self.event_log: list[dict[str, Any]] = []
         self._thread: threading.Thread | None = None
@@ -161,7 +132,7 @@ class NexusRuntime:
         self._lock = threading.Lock()
         self._future_map: dict[str, Future] = {}
         self.context_builder = ContextBuilder()
-        self.orchestrator = DummyOrchestrator()
+        self.orchestrator = orchestrator or DummyOrchestrator()
 
     def start(self) -> None:
         with self._lock:
@@ -227,11 +198,20 @@ class NexusRuntime:
         self.shutdown_complete = True
 
     def _process_event(self, event: Event) -> dict[str, Any]:
-        context = self.context_builder.build(event)
-        result = self.orchestrator.handle(event, context)
-        result["event_id"] = event.event_id
-        result["response"] = result.get("response", {})
-        return result
+        context_data = self.context_builder.build(event)
+        context = OrchestratorContext(**context_data)
+        orchestrator_result = self.orchestrator.process(context)
+        validation = self.validator.validate(orchestrator_result)
+        execution_results = self.router.execute(validation.approved_plan if validation.approved_plan else [])
+        response = orchestrator_result.response.to_dict()
+        return {
+            "event_id": event.event_id,
+            "orchestrator_result": orchestrator_result.to_dict(),
+            "validation_result": validation.to_dict(),
+            "execution_results": execution_results,
+            "response": response,
+            "status": "SUCCESS" if validation.valid else "PARTIAL_SUCCESS" if validation.approved_plan else "ERROR",
+        }
 
     def stop(self) -> None:
         if not self.is_running:
