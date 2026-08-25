@@ -10,6 +10,7 @@ from typing import Any
 from orchestrators import DummyOrchestrator, Orchestrator, OrchestratorContext
 
 from .registry import PluginRegistry
+from .orchestration_cycle import OrchestrationCycle, OrchestrationCycleConfig
 from .router import PluginRouter
 from .validator import ExecutionPlanValidator
 
@@ -121,8 +122,6 @@ class NexusRuntime:
         orchestrator: Orchestrator | None = None,
     ) -> None:
         self.registry = plugin_registry or PluginRegistry()
-        self.router = PluginRouter(self.registry)
-        self.validator = ExecutionPlanValidator(self.registry)
         self.queue = EventQueue()
         self.event_log: list[dict[str, Any]] = []
         self._thread: threading.Thread | None = None
@@ -133,6 +132,7 @@ class NexusRuntime:
         self._future_map: dict[str, Future] = {}
         self.context_builder = ContextBuilder()
         self.orchestrator = orchestrator or DummyOrchestrator()
+        self.cycle_config = OrchestrationCycleConfig()
 
     def start(self) -> None:
         with self._lock:
@@ -200,18 +200,13 @@ class NexusRuntime:
     def _process_event(self, event: Event) -> dict[str, Any]:
         context_data = self.context_builder.build(event)
         context = OrchestratorContext(**context_data)
-        orchestrator_result = self.orchestrator.process(context)
-        validation = self.validator.validate(orchestrator_result)
-        execution_results = self.router.execute(validation.approved_plan if validation.approved_plan else [])
-        response = orchestrator_result.response.to_dict()
-        return {
-            "event_id": event.event_id,
-            "orchestrator_result": orchestrator_result.to_dict(),
-            "validation_result": validation.to_dict(),
-            "execution_results": execution_results,
-            "response": response,
-            "status": "SUCCESS" if validation.valid else "PARTIAL_SUCCESS" if validation.approved_plan else "ERROR",
-        }
+        cycle = OrchestrationCycle(
+            self.orchestrator,
+            ExecutionPlanValidator(self.registry),
+            PluginRouter(self.registry),
+            self.cycle_config,
+        )
+        return cycle.run(context)
 
     def stop(self) -> None:
         if not self.is_running:

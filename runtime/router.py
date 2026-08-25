@@ -12,9 +12,13 @@ class PluginRouter:
     def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
 
-    def execute(self, actions: list[ActionRequest] | None) -> list[dict[str, Any]]:
+    def execute(
+        self,
+        actions: list[ActionRequest] | None,
+        successful_action_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        successful_ids: set[str] = set()
+        successful_ids = set(successful_action_ids or ())
         for action in actions or []:
             base = {"action_id": action.action_id, "plugin": action.plugin, "action": action.action}
             blocked = [dependency for dependency in action.depends_on if dependency not in successful_ids]

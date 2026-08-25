@@ -70,6 +70,7 @@ class OrchestratorContext:
 @dataclass(frozen=True)
 class OrchestratorResult:
     status: str = "SUCCESS"
+    complete: bool = True
     response: ResponseRequest = field(default_factory=ResponseRequest)
     actions: list[ActionRequest] = field(default_factory=list)
     background_tasks: list[BackgroundTaskRequest] = field(default_factory=list)

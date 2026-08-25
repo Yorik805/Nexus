@@ -8,8 +8,13 @@ from .base import Orchestrator, OrchestratorContext, OrchestratorResult, Respons
 class DummyOrchestrator(Orchestrator):
     """Deterministic placeholder brain with optional explicit test actions."""
 
-    def __init__(self, test_actions: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        test_actions: list[dict[str, Any]] | None = None,
+        scenario_actions: list[list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.test_actions = test_actions or []
+        self.scenario_actions = scenario_actions or []
 
     def process(self, context: OrchestratorContext) -> OrchestratorResult:
         event_type = str(context.event.get("type", ""))
@@ -20,9 +25,18 @@ class DummyOrchestrator(Orchestrator):
         )
         from .base import ActionRequest
 
+        execution_history = context.working_context.get("execution_history", [])
+        iteration = len(execution_history)
+        actions = self.test_actions
+        complete = True
+        if self.scenario_actions:
+            actions = self.scenario_actions[iteration] if iteration < len(self.scenario_actions) else []
+            complete = iteration >= len(self.scenario_actions) - 1
+
         return OrchestratorResult(
+            complete=complete,
             response=ResponseRequest(required=True, text=text),
-            actions=[ActionRequest.from_dict(action) for action in self.test_actions],
+            actions=[ActionRequest.from_dict(action) for action in actions],
             metadata={"intent": "DUMMY_RESPONSE"},
         )
 

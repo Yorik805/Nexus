@@ -42,7 +42,11 @@ class ExecutionPlanValidator:
     def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
 
-    def validate(self, result: OrchestratorResult | dict[str, Any]) -> ValidationResult:
+    def validate(
+        self,
+        result: OrchestratorResult | dict[str, Any],
+        known_action_ids: set[str] | None = None,
+    ) -> ValidationResult:
         errors: list[ValidationIssue] = []
         warnings: list[ValidationIssue] = []
         actions = result.actions if isinstance(result, OrchestratorResult) else result.get("actions", [])
@@ -52,7 +56,8 @@ class ExecutionPlanValidator:
 
         approved: list[ActionRequest] = []
         seen: set[str] = set()
-        all_ids = {str(item.get("action_id")) for item in actions if isinstance(item, dict) and item.get("action_id")}
+        all_ids = set(known_action_ids or ())
+        all_ids.update(str(item.get("action_id")) for item in actions if isinstance(item, dict) and item.get("action_id"))
 
         for raw_action in actions:
             if isinstance(raw_action, ActionRequest):
@@ -98,9 +103,15 @@ class ExecutionPlanValidator:
             approved.append(action)
 
         approved_ids = {action.action_id for action in approved}
+        known_ids = set(known_action_ids or ())
+        dependency_safe: list[ActionRequest] = []
         for action in approved:
-            if any(dependency not in approved_ids for dependency in action.depends_on):
+            if any(dependency not in approved_ids and dependency not in known_ids for dependency in action.depends_on):
                 errors.append(ValidationIssue("DEPENDENCY_REJECTED", "A dependency was rejected from the approved plan.", action.action_id))
+                approved_ids.discard(action.action_id)
+                continue
+            dependency_safe.append(action)
+        approved = dependency_safe
 
         valid = not errors
         if errors and approved:

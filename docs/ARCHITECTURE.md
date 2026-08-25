@@ -346,3 +346,30 @@ def process(self, context: OrchestratorContext) -> OrchestratorResult:
 ```
 
 The implementation should return typed structured data, avoid direct plugin calls, and leave execution to the runtime's validator and router. No separate Conversation AI is required.
+
+## 17. Phase 3A orchestration cycle
+
+Each submitted event creates one bounded `OrchestrationCycle`. The runtime remains alive and idle between events; the cycle is the only place where an orchestrator may be called more than once for the same event.
+
+```text
+Event
+	-> ContextBuilder
+	-> OrchestrationCycle
+			 -> Orchestrator.process(context)
+			 -> Validator
+			 -> PluginRouter
+			 -> execution results
+			 -> updated execution history in context
+			 -> repeat while complete is false
+	-> final structured cycle result
+```
+
+The cycle passes an `execution_history` list through `OrchestratorContext.working_context`. Each entry contains the iteration number, orchestrator result, validation result, and execution results. Validation failures are represented as `phase: VALIDATION` execution-history entries, so the brain can respond to invalid plans instead of having failures hidden.
+
+Completion is explicit: `OrchestratorResult.complete` must be true for normal completion. The cycle does not infer completion from an empty action list. A plugin error is recorded as an action error and returned to the next iteration; it does not terminate the cycle automatically.
+
+The default limits are five iterations, two consecutive identical plan fingerprints for no-progress protection, and fifty retained history entries. `LIMIT_REACHED` means the brain did not explicitly complete before the iteration limit. `NO_PROGRESS` means the same normalized plan was repeated consecutively at the configured threshold. Neither status claims that the task completed. History retention may truncate old entries, while the `iterations` field still reports the actual number processed.
+
+Actions execute sequentially. Dependencies may refer to actions in the current plan or to action IDs that succeeded in an earlier iteration. A dependency that did not succeed causes a structured router error and does not prevent independent later actions from running.
+
+The cycle result contains the event ID, final status, termination reason, total iterations, history, final response, and compatibility aliases for the latest orchestrator, validation, and execution results. The cycle is provider-neutral, so a future Groq or local implementation participates through the same `Orchestrator.process()` method.
