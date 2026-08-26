@@ -13,10 +13,7 @@ except ImportError:  # pragma: no cover - optional runtime dependencies
     chromadb = None  # type: ignore
     Settings = None  # type: ignore
 
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:  # pragma: no cover - optional runtime dependencies
-    SentenceTransformer = None  # type: ignore
+SentenceTransformer = None  # type: ignore
 
 try:
     import numpy as np
@@ -30,14 +27,26 @@ _EMBEDDER = None
 _DEVICE: str | None = None
 
 
+def _load_sentence_transformer() -> Any:
+    global SentenceTransformer
+    if SentenceTransformer is None:
+        try:
+            from sentence_transformers import SentenceTransformer as model_type
+        except ImportError as exc:  # pragma: no cover - optional runtime dependencies
+            raise ImportError("sentence-transformers is required for vector search") from exc
+        SentenceTransformer = model_type
+    return SentenceTransformer
+
+
 def _persist_dir() -> Path:
     return Path(__file__).resolve().parent / "database" / "chroma"
 
 
 def init_vector_store(collection_name: str = "nexus_memory") -> None:
     global _CLIENT, _COLLECTION, _EMBEDDER
-    if chromadb is None or SentenceTransformer is None:
-        raise ImportError("chromadb and sentence-transformers are required for vector search")
+    model_type = _load_sentence_transformer()
+    if chromadb is None:
+        raise ImportError("chromadb is required for vector search")
 
     if _CLIENT is not None and _COLLECTION is not None and _EMBEDDER is not None:
         return
@@ -73,13 +82,14 @@ def init_vector_store(collection_name: str = "nexus_memory") -> None:
     global _DEVICE
     _DEVICE = device_str
 
-    _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2", device=device_str)
+    _EMBEDDER = model_type("all-MiniLM-L6-v2", device=device_str)
 
 
 def _ensure_ready() -> None:
     global _EMBEDDER
-    if chromadb is None or SentenceTransformer is None:
-        raise ImportError("chromadb and sentence-transformers are required for vector search")
+    model_type = _load_sentence_transformer()
+    if chromadb is None:
+        raise ImportError("chromadb is required for vector search")
     if _CLIENT is None:
         init_vector_store()
     # ensure embedder is loaded even if client existed
@@ -87,7 +97,7 @@ def _ensure_ready() -> None:
         # initialize embedder with detected device
         try:
             device_str = _DEVICE or "cpu"
-            _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2", device=device_str)
+            _EMBEDDER = model_type("all-MiniLM-L6-v2", device=device_str)
         except Exception:
             raise
   
