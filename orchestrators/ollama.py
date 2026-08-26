@@ -7,7 +7,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .base import Orchestrator, OrchestratorContext, OrchestratorRequest, OrchestratorResult, ResponseRequest
+from .base import ActionRequest, BackgroundTaskRequest, Orchestrator, OrchestratorContext, OrchestratorRequest, OrchestratorResult, ResponseRequest
 from .prompt_loader import build_orchestrator_request
 
 
@@ -16,6 +16,7 @@ class OllamaConfig:
     model: str = "qwen2.5:1.5b"
     base_url: str = "http://127.0.0.1:11434"
     timeout_seconds: float = 180.0
+    max_output_tokens: int = 1024
 
     @classmethod
     def from_environment(cls) -> "OllamaConfig":
@@ -25,6 +26,7 @@ class OllamaConfig:
             model=os.getenv("OLLAMA_MODEL", cls.model),
             base_url=os.getenv("OLLAMA_BASE_URL", cls.base_url),
             timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", cls.timeout_seconds)),
+            max_output_tokens=max(1, int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", cls.max_output_tokens))),
         )
 
 
@@ -62,7 +64,8 @@ class OllamaOrchestrator(Orchestrator):
         payload = {
             "model": self.config.model,
             "stream": False,
-            "format": "json",
+            "format": self._response_schema(request.context.get("runtime", {})),
+            "options": {"num_predict": self.config.max_output_tokens},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps({"context": request.context, "current_event": request.current_event}, default=str)},
@@ -84,12 +87,48 @@ class OllamaOrchestrator(Orchestrator):
         return json.loads(content.strip())
 
     @staticmethod
+    def _response_schema(runtime_info: dict[str, Any]) -> dict[str, Any]:
+        properties: dict[str, Any] = {}
+        plugins = runtime_info.get("plugins", {}) if isinstance(runtime_info, dict) else {}
+        for plugin in plugins.values() if isinstance(plugins, dict) else []:
+            contracts = plugin.get("contracts", {}) if isinstance(plugin, dict) else {}
+            for contract in contracts.values() if isinstance(contracts, dict) else []:
+                if isinstance(contract, dict):
+                    properties.update(contract.get("required", {}))
+                    properties.update(contract.get("optional", {}))
+        return {
+            "type": "object",
+            "required": ["status", "complete", "response", "actions"],
+            "properties": {
+                "status": {"type": "string"},
+                "complete": {"type": "boolean"},
+                "decision": {"type": "string", "enum": ["CONTINUE", "NO_ACTION", "COMPLETE"]},
+                "response": {"type": "object", "required": ["required", "text"], "properties": {"required": {"type": "boolean"}, "text": {"type": "string"}, "metadata": {"type": "object"}}},
+                "actions": {"type": "array", "items": {"type": "object", "required": ["action_id", "plugin", "action", "data"], "properties": {"action_id": {"type": "string"}, "plugin": {"type": "string"}, "action": {"type": "string"}, "data": {"type": "object", "properties": properties}, "depends_on": {"type": "array", "items": {"type": "string"}}}}},
+                "background_tasks": {"type": "array", "items": {"type": "object"}},
+                "metadata": {"type": "object"},
+            },
+        }
+
+    @staticmethod
     def _parse_response(raw: dict[str, Any]) -> OrchestratorResult:
         if not isinstance(raw, dict) or not isinstance(raw.get("response", {}), dict):
             raise ValueError("Ollama returned an invalid Nexus response.")
         actions = raw.get("actions", [])
         if not isinstance(actions, list):
             raise ValueError("Ollama actions must be an array.")
-        from .gemini import GeminiOrchestrator
-        return GeminiOrchestrator._parse_response(type("Response", (), {"parsed": raw})())
+        response_data = raw["response"]
+        decision = str(raw.get("decision", "COMPLETE" if raw.get("complete") else "CONTINUE")).upper()
+        if decision not in {"CONTINUE", "NO_ACTION", "COMPLETE"}:
+            raise ValueError("Ollama decision must be CONTINUE, NO_ACTION, or COMPLETE.")
+        return OrchestratorResult(
+            status=str(raw.get("status", "SUCCESS")),
+            complete=bool(raw["complete"]),
+            decision=decision,
+            response=ResponseRequest(required=bool(response_data.get("required", True)), text=str(response_data.get("text", "")), metadata=response_data.get("metadata", {}) if isinstance(response_data.get("metadata", {}), dict) else {}),
+            actions=[ActionRequest.from_dict(action) for action in actions],
+            background_tasks=[BackgroundTaskRequest(task_type=str(task.get("task_type", "")), data=task.get("data", {}), task_id=str(task.get("task_id", ""))) for task in raw.get("background_tasks", []) if isinstance(task, dict)],
+            metadata=raw.get("metadata", {}) if isinstance(raw.get("metadata", {}), dict) else {},
+            error=raw.get("error") if isinstance(raw.get("error"), dict) else None,
+        )
 
