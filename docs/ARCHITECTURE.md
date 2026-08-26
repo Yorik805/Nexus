@@ -347,6 +347,24 @@ def process(self, context: OrchestratorContext) -> OrchestratorResult:
 
 The implementation should return typed structured data, avoid direct plugin calls, and leave execution to the runtime's validator and router. No separate Conversation AI is required.
 
+## 17. Phase 3B Gemini provider
+
+`GeminiOrchestrator` implements the same `Orchestrator.process(context)` contract as Dummy. It is only a decision provider: it does not import or call plugins, access the filesystem, execute commands, or bypass validation and routing. The runtime injects live `PluginRegistry.metadata()` into `OrchestratorContext.system_context.runtime.plugins`, so adding a registered plugin does not require editing Gemini code.
+
+Gemini uses the current `google-genai` SDK and defaults to `gemini-3.7-flash`. It requests JSON structured output with a response schema matching the existing result/action contract, then translates the response into `OrchestratorResult`, `ActionRequest`, `ResponseRequest`, and background-task models. The model is instructed to operate as an OS orchestrator using the layered files under `orchestrators/prompts/`, not as a free-form chatbot. Execution remains `OBSERVE -> DECIDE -> ACT -> OBSERVE RESULT` through the existing cycle.
+
+Provider construction is centralized in `orchestrators/factory.py`. `ORCHESTRATOR_PROVIDER` defaults to `dummy`; setting it to `gemini` selects Gemini, and `local` remains available as a future slot. `NexusRuntime` accepts explicit dependency injection, so tests and deployments can continue using Dummy without an API key.
+
+Credentials are read only from `GEMINI_API_KEY` or the comma-separated `GEMINI_API_KEYS` environment variable. `CredentialPool` keeps key state in memory, applies a bounded cooldown after authentication/rate-limit/provider availability failures, and never prints key values. Retries are finite and use configurable backoff. Missing or exhausted credentials, malformed responses, timeouts, and provider failures become structured orchestrator errors rather than runtime crashes. Copy `.env.example` to `.env` for local setup; `.env` is ignored by Git and real keys must never be committed.
+
+Install the optional provider dependency with:
+
+```bash
+e:/Nexus/.venv/Scripts/python.exe -m pip install -r assets/requirements.txt
+```
+
+Then configure `ORCHESTRATOR_PROVIDER=gemini` and a real `GEMINI_API_KEY` outside source control. Automated tests inject fake clients and make no network calls.
+
 ## 17. Phase 3A orchestration cycle
 
 Each submitted event creates one bounded `OrchestrationCycle`. The runtime remains alive and idle between events; the cycle is the only place where an orchestrator may be called more than once for the same event.

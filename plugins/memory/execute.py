@@ -22,6 +22,27 @@ _SUPPORTED_ACTIONS = {
     "LIST": list_module.list_memories,
 }
 
+_ACTION_CONTRACTS = {
+    "SEARCH": {
+        "description": "Search relevant stored memories.",
+        "required": {"type": {"type": "string", "enum": ["SQLITE", "VECTOR"]}, "query": {"type": "string"}},
+        "optional": {"category": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer"}},
+    },
+    "WRITE": {
+        "description": "Store a memory.",
+        "required": {
+            "title": {"type": "string"},
+            "category": {"type": "string", "enum": ["PROJECT", "PERSON", "IDEA", "PREFERENCE"]},
+            "content": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+        },
+    },
+    "GET": {"description": "Retrieve one memory.", "required": {"memory_id": {"type": "string"}}},
+    "DELETE": {"description": "Delete one memory.", "required": {"memory_id": {"type": "string"}}},
+    "UPDATE": {"description": "Update one memory.", "required": {"memory_id": {"type": "string"}, "changes": {"type": "object"}}},
+    "LIST": {"description": "List stored memories.", "optional": {"category": {"type": "string"}, "limit": {"type": "integer"}}},
+}
+
 
 def _build_response(status: str, message: str, data: dict | None = None) -> dict:
     return {

@@ -57,7 +57,11 @@ class ExecutionPlanValidator:
         approved: list[ActionRequest] = []
         seen: set[str] = set()
         all_ids = set(known_action_ids or ())
-        all_ids.update(str(item.get("action_id")) for item in actions if isinstance(item, dict) and item.get("action_id"))
+        all_ids.update(
+            item.action_id if isinstance(item, ActionRequest) else str(item.get("action_id"))
+            for item in actions
+            if (isinstance(item, ActionRequest) and item.action_id) or (isinstance(item, dict) and item.get("action_id"))
+        )
 
         for raw_action in actions:
             if isinstance(raw_action, ActionRequest):
@@ -79,6 +83,10 @@ class ExecutionPlanValidator:
                 continue
 
             action_id = action.action_id
+            if action.action.upper() == "NO_ACTION":
+                approved.append(action)
+                seen.add(action_id)
+                continue
             if not action.plugin.strip() or not action.action.strip():
                 errors.append(ValidationIssue("MISSING_FIELD", "Action plugin and action are required.", action_id))
                 continue
@@ -95,6 +103,15 @@ class ExecutionPlanValidator:
                 continue
             if action.action.upper() not in plugin.actions:
                 errors.append(ValidationIssue("ACTION_NOT_SUPPORTED", f"Plugin {action.plugin} does not support {action.action}.", action_id))
+                continue
+            contract = plugin.contracts.get(action.action.upper(), {})
+            required = contract.get("required", {}) if isinstance(contract, dict) else {}
+            for field_name, field_schema in required.items():
+                if field_name not in action.data:
+                    errors.append(ValidationIssue("MISSING_ACTION_FIELD", f"{action.action} requires data field: {field_name}.", action_id))
+                elif not self._matches_type(action.data[field_name], field_schema):
+                    errors.append(ValidationIssue("INVALID_ACTION_FIELD", f"{field_name} has an invalid type or value.", action_id))
+            if any(issue.action_id == action_id and issue.code in {"MISSING_ACTION_FIELD", "INVALID_ACTION_FIELD"} for issue in errors):
                 continue
             missing_dependencies = [dependency for dependency in action.depends_on if dependency not in all_ids]
             if missing_dependencies:
@@ -117,3 +134,18 @@ class ExecutionPlanValidator:
         if errors and approved:
             warnings.append(ValidationIssue("PARTIAL_PLAN", "Some invalid actions were excluded; valid actions remain available."))
         return ValidationResult(valid, approved, errors, warnings)
+
+    @staticmethod
+    def _matches_type(value: Any, schema: dict[str, Any]) -> bool:
+        expected = schema.get("type")
+        type_matches = {
+            "string": isinstance(value, str),
+            "boolean": isinstance(value, bool),
+            "integer": isinstance(value, int) and not isinstance(value, bool),
+            "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+            "array": isinstance(value, list),
+            "object": isinstance(value, dict),
+        }
+        if expected and not type_matches.get(expected, True):
+            return False
+        return not schema.get("enum") or value in schema["enum"]

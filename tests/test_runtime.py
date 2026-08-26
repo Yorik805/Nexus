@@ -101,3 +101,22 @@ def test_runtime_stays_alive_after_event() -> None:
         assert runtime.is_running is True
     finally:
         runtime.stop()
+
+
+def test_runtime_event_path_uses_injected_context_builder() -> None:
+    calls: list[dict] = []
+
+    class RecordingBuilder(ContextBuilder):
+        def build(self, event, **kwargs):
+            calls.append({"type": event.type if isinstance(event, Event) else event["type"], "history": kwargs.get("execution_history", [])})
+            return super().build(event, **kwargs)
+
+    runtime = NexusRuntime(context_builder=RecordingBuilder(memory_retriever=lambda _text: []))
+    runtime.start()
+    try:
+        result = runtime.submit_event({"type": "USER_MESSAGE", "source": "test", "data": {"text": "hello"}})
+    finally:
+        runtime.stop()
+    assert result["termination_reason"] == "COMPLETED"
+    assert calls
+    assert calls[0]["type"] == "USER_MESSAGE"

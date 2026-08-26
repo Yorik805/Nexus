@@ -9,6 +9,9 @@ from pathlib import Path
 
 from assets.client.nexus_connection import NexusConnection
 from assets.voice_client import SpeechRecognizer, load_config, make_connection
+from nexus_server import NexusHTTPServer
+from orchestrators import DummyOrchestrator
+from runtime import NexusRuntime
 
 
 def test_config_is_nested_and_server_is_editable(tmp_path: Path) -> None:
@@ -56,6 +59,24 @@ def test_mock_connection_is_available_without_server() -> None:
     connection.register("laptop_1", "laptop")
     response = connection.send_user_message("laptop_1", "test")
     assert connection.receive_response(response) == "Mock Nexus response to: test"
+
+
+def test_connection_reaches_nexus_runtime_gateway() -> None:
+    runtime = NexusRuntime(orchestrator=DummyOrchestrator())
+    runtime.start()
+    server = NexusHTTPServer(("127.0.0.1", 0), runtime)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        connection = NexusConnection("127.0.0.1", server.server_port)
+        connection.register("terminal_b", "test-client")
+        response = connection.send_user_message("terminal_b", "Hello through the gateway")
+        assert connection.receive_response(response) == "Dummy orchestrator received your message."
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+        runtime.stop()
 
 
 def test_speech_recognizer_loads_model_once(monkeypatch) -> None:

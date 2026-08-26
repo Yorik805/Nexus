@@ -34,6 +34,17 @@ _SUPPORTED_ACTIONS = {
     "EXISTS": exists_module.exists,
 }
 
+_ACTION_CONTRACTS = {
+    action: {"description": f"Filesystem {action.lower()} operation.", "required": {"path": {"type": "string"}}}
+    for action in ("READ", "WRITE", "APPEND", "DELETE", "EXISTS", "METADATA", "LIST", "SEARCH")
+}
+_ACTION_CONTRACTS["WRITE"]["required"] = {"path": {"type": "string"}, "content": {"type": "string"}}
+_ACTION_CONTRACTS["APPEND"]["required"] = {"path": {"type": "string"}, "content": {"type": "string"}}
+_ACTION_CONTRACTS["COPY"] = {"required": {"source": {"type": "string"}, "destination": {"type": "string"}}}
+_ACTION_CONTRACTS["MOVE"] = _ACTION_CONTRACTS["COPY"]
+_ACTION_CONTRACTS["RENAME"] = {"required": {"path": {"type": "string"}, "new_name": {"type": "string"}}}
+_ACTION_CONTRACTS["MKDIR"] = {"required": {"path": {"type": "string"}}}
+
 
 def _build_response(status: str, message: str, data: dict | None = None) -> dict:
     return {

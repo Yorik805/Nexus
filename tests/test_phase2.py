@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from orchestrators import ActionRequest, DummyOrchestrator, OrchestratorContext, OrchestratorResult
 from orchestrators.prompt_loader import build_system_instruction
-from runtime import ExecutionPlanValidator, NexusRuntime, PluginRegistry, PluginRouter
+from runtime import ContextBuilder, Event, ExecutionPlanValidator, NexusRuntime, PluginRegistry, PluginRouter
 
 
 def make_registry() -> PluginRegistry:
@@ -30,6 +30,61 @@ def test_registry_discovers_existing_plugin_actions() -> None:
     assert {"SEARCH", "WRITE", "GET"}.issubset(registry.get("memory").actions)
     assert "EXECUTE" in registry.get("terminal").actions
     assert registry.metadata()["filesystem"]["actions"]
+    search_contract = registry.metadata()["memory"]["contracts"]["SEARCH"]
+    assert "type" in search_contract["required"]
+    assert search_contract["required"]["type"]["enum"] == ["SQLITE", "VECTOR"]
+    write_contract = registry.metadata()["memory"]["contracts"]["WRITE"]
+    assert {"title", "category", "content", "tags"}.issubset(write_contract["required"])
+
+
+def test_validator_enforces_action_contract_fields_and_enums() -> None:
+    validator = ExecutionPlanValidator(PluginRegistry())
+    missing = validator.validate({"actions": [{"action_id": "search", "plugin": "memory", "action": "SEARCH", "data": {"query": "x"}}]})
+    invalid = validator.validate({"actions": [{"action_id": "search", "plugin": "memory", "action": "SEARCH", "data": {"type": "BAD", "query": "x"}}]})
+    assert {issue.code for issue in missing.errors} == {"MISSING_ACTION_FIELD"}
+    assert {issue.code for issue in invalid.errors} == {"INVALID_ACTION_FIELD"}
+
+
+def test_context_builder_retrieves_memory_before_orchestrator() -> None:
+    registry = PluginRegistry()
+    calls: list[dict] = []
+    registry.register("memory", lambda request: calls.append(request) or {"status": "SUCCESS", "data": {"results": [{"title": "Nexus"}]}}, {"SEARCH"})
+    context = ContextBuilder(registry).build(Event(type="USER_MESSAGE", data={"text": "Nexus architecture"}))
+    assert calls[0]["data"]["type"] == "SQLITE"
+    assert context["memories"] == [{"title": "Nexus"}]
+    assert context["system_context"]["context_metadata"]["memory"]["status"] == "success"
+
+
+def test_non_user_event_does_not_retrieve_memory() -> None:
+    calls: list[str] = []
+    builder = ContextBuilder(memory_retriever=lambda text: calls.append(text) or [{"title": "unexpected"}])
+    context = builder.build(Event(type="EXECUTION_RESULT", data={"status": "SUCCESS"}))
+    assert calls == []
+    assert context["memories"] == []
+    assert context["system_context"]["context_metadata"]["memory"]["status"] == "not_applicable"
+
+
+def test_memory_retrieval_failure_is_recorded_without_crashing() -> None:
+    builder = ContextBuilder(memory_retriever=lambda _text: (_ for _ in ()).throw(RuntimeError("memory offline")))
+    context = builder.build(Event(type="USER_MESSAGE", data={"text": "hello"}))
+    memory_metadata = context["system_context"]["context_metadata"]["memory"]
+    assert context["memories"] == []
+    assert memory_metadata["status"] == "failed"
+    assert "memory offline" in memory_metadata["error"]
+
+
+def test_empty_memory_retrieval_is_distinguished_from_failure() -> None:
+    context = ContextBuilder(memory_retriever=lambda _text: []).build(Event(type="USER_MESSAGE", data={"text": "unknown"}))
+    assert context["system_context"]["context_metadata"]["memory"]["status"] == "empty"
+
+
+def test_runtime_exposes_explicit_memory_contract_without_delegating_context_retrieval() -> None:
+    runtime = NexusRuntime()
+    context = runtime.context_builder.build(Event(type="SYSTEM_EVENT", data={}))
+    runtime_context = runtime.registry.metadata()
+    assert "SEARCH" in runtime_context["memory"]["actions"]
+    assert "type" in runtime_context["memory"]["contracts"]["SEARCH"]["required"]
+    assert context["memories"] == []
 
 
 def test_validator_accepts_valid_plan_and_rejects_invalid_entries_partially() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from typing import Any, Callable
 
@@ -12,6 +12,7 @@ class PluginMetadata:
     entry_point: Callable[[dict[str, Any]], dict[str, Any]]
     description: str = ""
     version: str | None = None
+    contracts: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class PluginRegistry:
@@ -32,12 +33,16 @@ class PluginRegistry:
         if not isinstance(actions, dict):
             execute_module = import_module(f"{module_name}.execute")
             actions = getattr(execute_module, "_SUPPORTED_ACTIONS", {})
+            contracts = getattr(execute_module, "_ACTION_CONTRACTS", {})
+        else:
+            contracts = getattr(module, "_ACTION_CONTRACTS", {})
         metadata = PluginMetadata(
             name=str(name).lower(),
             actions=frozenset(str(action).upper() for action in actions),
             entry_point=entry_point,
             description=str(getattr(module, "__doc__", "") or "").splitlines()[0] if getattr(module, "__doc__", None) else "",
             version=getattr(module, "__version__", None),
+            contracts=contracts,
         )
         self._plugins[metadata.name] = metadata
         return metadata
@@ -65,6 +70,7 @@ class PluginRegistry:
                 "entry_point": f"{plugin.entry_point.__module__}.{plugin.entry_point.__name__}",
                 "description": plugin.description,
                 "version": plugin.version,
+                "contracts": plugin.contracts,
             }
             for name, plugin in sorted(self._plugins.items())
         }

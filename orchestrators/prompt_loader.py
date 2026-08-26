@@ -18,6 +18,25 @@ def build_system_instruction(runtime_info: dict[str, Any] | None = None) -> str:
     return "\n\n".join(parts)
 
 
+def build_orchestrator_request(context: Any, runtime_info: dict[str, Any] | None = None):
+    from .base import OrchestratorRequest
+
+    return OrchestratorRequest(
+        system_instruction=load_prompt("system"),
+        developer_instruction=load_prompt("developer"),
+        schema_instruction=load_prompt("schemas"),
+        context={
+            "user_context": context.user_context,
+            "memories": context.memories,
+            "working_context": context.working_context,
+            "active_tasks": context.active_tasks,
+            "system_context": context.system_context,
+            "runtime": runtime_info or context.system_context.get("runtime", {}),
+        },
+        current_event=context.event,
+    )
+
+
 def _format_json(value: Any) -> str:
     import json
 

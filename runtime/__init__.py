@@ -5,6 +5,8 @@ from .orchestration_cycle import OrchestrationCycle, OrchestrationCycleConfig
 from .registry import PluginRegistry
 from .router import PluginRouter
 from .validator import ExecutionPlanValidator, ValidationResult
+from .history import ContextHistoryManager
+from .observability import RuntimeTrace
 
 __all__ = [
     "ContextBuilder",
@@ -18,4 +20,6 @@ __all__ = [
     "PluginRegistry",
     "PluginRouter",
     "ValidationResult",
+    "ContextHistoryManager",
+    "RuntimeTrace",
 ]

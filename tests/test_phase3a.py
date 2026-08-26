@@ -67,6 +67,76 @@ def test_two_step_cycle_passes_results_to_next_context() -> None:
     assert result["response"]["text"] == "Task completed."
 
 
+def test_context_builder_is_used_on_every_iteration() -> None:
+    calls: list[tuple[dict, list[dict]]] = []
+
+    def build(event, *, execution_state, execution_history, runtime_state):
+        calls.append((event, execution_history))
+        return {"event": event, "working_context": {}, "memories": [], "user_context": {}, "active_tasks": [], "system_context": {}}
+
+    orchestrator = SequenceOrchestrator([
+        [ActionRequest(action_id="a", plugin="fake", action="ECHO")],
+    ])
+    cycle = OrchestrationCycle(
+        orchestrator,
+        ExecutionPlanValidator(make_registry()),
+        PluginRouter(make_registry()),
+        context_builder=build,
+    )
+    result = cycle.run(initial_context())
+    assert result["termination_reason"] == "COMPLETED"
+    assert len(calls) == result["iterations"]
+    assert calls[1][1][0]["execution_results"][0]["action_id"] == "a"
+
+
+def test_no_action_is_a_valid_idle_outcome() -> None:
+    class IdleOrchestrator(Orchestrator):
+        def process(self, context: OrchestratorContext) -> OrchestratorResult:
+            return OrchestratorResult(complete=False, decision="NO_ACTION", response=ResponseRequest(required=False, text="idle"))
+
+    result = make_cycle(IdleOrchestrator()).run(initial_context())
+    assert result["status"] == "IDLE"
+    assert result["termination_reason"] == "NO_ACTION"
+    assert result["execution_results"] == []
+
+
+def test_history_manager_compresses_old_records_and_preserves_failures() -> None:
+    from runtime import ContextHistoryManager
+
+    manager = ContextHistoryManager(recent_limit=2)
+    for index, status in enumerate(["SUCCESS", "ERROR", "SUCCESS", "ERROR"]):
+        manager.append({"iteration": index, "execution_results": [{"action_id": f"a{index}", "status": status, "message": "important"}]})
+    context = manager.context()
+    assert len(context["recent_execution_history"]) == 2
+    assert "a0=SUCCESS" in context["historical_summary"]
+    assert "a1=ERROR" in context["historical_summary"]
+    assert context["compression"]["occurred"] is True
+
+
+def test_same_plan_dependency_chain_executes_in_dependency_order() -> None:
+    orchestrator = SequenceOrchestrator([[
+        ActionRequest(action_id="read", plugin="fake", action="ECHO", data={"step": 2}, depends_on=["write"]),
+        ActionRequest(action_id="write", plugin="fake", action="ECHO", data={"step": 1}),
+    ]])
+    result = make_cycle(orchestrator).run(initial_context())
+    assert [item["action_id"] for item in result["history"][0]["execution_results"]] == ["write", "read"]
+    assert result["status"] == "SUCCESS"
+
+
+def test_failed_dependency_prevents_completion_even_when_orchestrator_says_complete() -> None:
+    class CompleteAfterFailure(Orchestrator):
+        def process(self, context: OrchestratorContext) -> OrchestratorResult:
+            return OrchestratorResult(
+                status="SUCCESS", complete=True,
+                actions=[ActionRequest(action_id="read", plugin="failure", action="FAIL", depends_on=["missing"])],
+                response=ResponseRequest(required=True, text="verified"),
+            )
+
+    result = make_cycle(CompleteAfterFailure()).run(initial_context())
+    assert result["termination_reason"] != "COMPLETED"
+    assert result["status"] != "SUCCESS"
+
+
 def test_three_step_cycle_accumulates_history() -> None:
     orchestrator = SequenceOrchestrator([
         [ActionRequest(action_id="one", plugin="fake", action="ECHO", data={"n": 1})],
@@ -87,8 +157,8 @@ def test_plugin_failure_is_returned_and_cycle_continues() -> None:
     ])
     result = make_cycle(orchestrator).run(initial_context())
 
-    assert result["status"] == "SUCCESS"
-    assert result["termination_reason"] == "COMPLETED"
+    assert result["status"] == "NO_PROGRESS"
+    assert result["termination_reason"] == "NO_PROGRESS"
     assert result["history"][0]["execution_results"][0]["status"] == "ERROR"
     assert len(orchestrator.calls[1].working_context["execution_history"]) == 1
 
@@ -100,7 +170,7 @@ def test_invalid_action_is_recorded_while_valid_action_executes() -> None:
     ]])
     result = make_cycle(orchestrator).run(initial_context())
 
-    assert result["status"] == "PARTIAL_SUCCESS"
+    assert result["status"] == "NO_PROGRESS"
     execution_results = result["history"][0]["execution_results"]
     assert any(item["action_id"] == "invalid" and item["phase"] == "VALIDATION" for item in execution_results)
     assert any(item["action_id"] == "valid" and item["status"] == "SUCCESS" for item in execution_results)
@@ -126,6 +196,22 @@ def test_repeated_plan_stops_as_no_progress() -> None:
     assert result["status"] == "NO_PROGRESS"
     assert result["termination_reason"] == "NO_PROGRESS"
     assert result["iterations"] == 2
+
+
+def test_orchestrator_failure_is_not_reported_as_success() -> None:
+    class FailingOrchestrator(Orchestrator):
+        def process(self, context: OrchestratorContext) -> OrchestratorResult:
+            return OrchestratorResult(
+                status="ERROR",
+                complete=True,
+                response=ResponseRequest(required=False, text=""),
+                error={"code": "UNAVAILABLE", "message": "provider unavailable"},
+            )
+
+    result = make_cycle(FailingOrchestrator()).run(initial_context())
+    assert result["status"] == "ERROR"
+    assert result["termination_reason"] == "ORCHESTRATOR_ERROR"
+    assert result["orchestrator_result"]["error"]["code"] == "UNAVAILABLE"
 
 
 def test_runtime_stays_alive_and_processes_independent_events() -> None:

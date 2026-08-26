@@ -7,6 +7,17 @@ import uuid
 
 
 @dataclass(frozen=True)
+class OrchestratorRequest:
+    """Provider-neutral request sent from Nexus to an orchestrator adapter."""
+
+    system_instruction: str
+    developer_instruction: str
+    schema_instruction: str
+    context: dict[str, Any]
+    current_event: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class ActionRequest:
     """One plugin operation proposed by an orchestrator."""
 
@@ -76,6 +87,7 @@ class OrchestratorResult:
     background_tasks: list[BackgroundTaskRequest] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error: dict[str, Any] | None = None
+    decision: str = "CONTINUE"
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
