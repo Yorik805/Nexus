@@ -17,6 +17,7 @@ class OllamaConfig:
     base_url: str = "http://127.0.0.1:11434"
     timeout_seconds: float = 180.0
     max_output_tokens: int = 1024
+    keep_alive: str | int = "10m"
 
     @classmethod
     def from_environment(cls) -> "OllamaConfig":
@@ -27,6 +28,7 @@ class OllamaConfig:
             base_url=os.getenv("OLLAMA_BASE_URL", cls.base_url),
             timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", cls.timeout_seconds)),
             max_output_tokens=max(1, int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", cls.max_output_tokens))),
+            keep_alive=os.getenv("OLLAMA_KEEP_ALIVE", cls.keep_alive),
         )
 
 
@@ -66,6 +68,7 @@ class OllamaOrchestrator(Orchestrator):
             "stream": False,
             "format": self._response_schema(request.context.get("runtime", {})),
             "options": {"num_predict": self.config.max_output_tokens},
+            "keep_alive": self.config.keep_alive,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps({"context": request.context, "current_event": request.current_event}, default=str)},
@@ -84,7 +87,12 @@ class OllamaOrchestrator(Orchestrator):
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str):
             raise ValueError("Ollama response did not contain message.content.")
-        return json.loads(content.strip())
+        content = content.strip()
+        if content.startswith("```") and content.endswith("```"):
+            content = content[3:-3].strip()
+            if content.lower().startswith("json"):
+                content = content[4:].lstrip()
+        return json.loads(content)
 
     @staticmethod
     def _response_schema(runtime_info: dict[str, Any]) -> dict[str, Any]:
@@ -117,6 +125,11 @@ class OllamaOrchestrator(Orchestrator):
         actions = raw.get("actions", [])
         if not isinstance(actions, list):
             raise ValueError("Ollama actions must be an array.")
+        if any(not isinstance(action, dict) for action in actions):
+            raise ValueError("Ollama actions must contain only objects.")
+        background_tasks = raw.get("background_tasks", [])
+        if not isinstance(background_tasks, list) or any(not isinstance(task, dict) for task in background_tasks):
+            raise ValueError("Ollama background_tasks must contain only objects.")
         response_data = raw["response"]
         decision = str(raw.get("decision", "COMPLETE" if raw.get("complete") else "CONTINUE")).upper()
         if decision not in {"CONTINUE", "NO_ACTION", "COMPLETE"}:
@@ -127,7 +140,7 @@ class OllamaOrchestrator(Orchestrator):
             decision=decision,
             response=ResponseRequest(required=bool(response_data.get("required", True)), text=str(response_data.get("text", "")), metadata=response_data.get("metadata", {}) if isinstance(response_data.get("metadata", {}), dict) else {}),
             actions=[ActionRequest.from_dict(action) for action in actions],
-            background_tasks=[BackgroundTaskRequest(task_type=str(task.get("task_type", "")), data=task.get("data", {}), task_id=str(task.get("task_id", ""))) for task in raw.get("background_tasks", []) if isinstance(task, dict)],
+            background_tasks=[BackgroundTaskRequest(task_type=str(task.get("task_type", "")), data=task.get("data", {}), task_id=str(task.get("task_id", ""))) for task in background_tasks],
             metadata=raw.get("metadata", {}) if isinstance(raw.get("metadata", {}), dict) else {},
             error=raw.get("error") if isinstance(raw.get("error"), dict) else None,
         )

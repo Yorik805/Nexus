@@ -11,6 +11,7 @@ from .dummy import DummyOrchestrator
 from .factory import create_orchestrator
 from .gemini import GeminiConfig, GeminiOrchestrator
 from .ollama import OllamaConfig, OllamaOrchestrator
+from .local import LocalOrchestrator
 
 __all__ = [
     "ActionRequest",
@@ -21,6 +22,7 @@ __all__ = [
     "GeminiOrchestrator",
     "OllamaConfig",
     "OllamaOrchestrator",
+    "LocalOrchestrator",
     "Orchestrator",
     "OrchestratorContext",
     "OrchestratorResult",

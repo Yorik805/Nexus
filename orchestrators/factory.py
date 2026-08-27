@@ -29,7 +29,10 @@ def create_orchestrator(
             gemini_config = GeminiConfig(**{key: value for key, value in config.items() if key in allowed})
         return GeminiOrchestrator(config=gemini_config, trace=trace, **kwargs)
     if selected == "local":
-        return LocalOrchestrator(config)
+        local_config = kwargs.pop("local_config", None)
+        if local_config is None and isinstance(config, OllamaConfig):
+            local_config = config
+        return LocalOrchestrator(local_config or config, trace=kwargs.pop("trace", None))
     if selected == "ollama":
         ollama_config = kwargs.pop("ollama_config", None)
         if ollama_config is None and isinstance(config, OllamaConfig):

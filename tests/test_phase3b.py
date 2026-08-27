@@ -6,11 +6,14 @@ from orchestrators import (
     ActionRequest,
     GeminiConfig,
     GeminiOrchestrator,
+    LocalOrchestrator,
+    OllamaConfig,
     Orchestrator,
     OrchestratorContext,
     OrchestratorResult,
     create_orchestrator,
 )
+from orchestrators import ollama as ollama_module
 from orchestrators.credentials import CredentialPool
 
 
@@ -166,3 +169,68 @@ def test_all_credentials_unavailable_is_clean_failure() -> None:
 def test_provider_factory_keeps_dummy_default_and_supports_gemini() -> None:
     assert isinstance(create_orchestrator("dummy"), Orchestrator)
     assert isinstance(create_orchestrator("gemini", gemini_config=GeminiConfig(), credential_pool=CredentialPool([])), GeminiOrchestrator)
+
+
+class FakeHTTPResponse:
+    def __init__(self, payload: dict) -> None:
+        self.payload = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self) -> bytes:
+        return self.payload
+
+
+def test_local_orchestrator_sends_nexus_request_to_ollama(monkeypatch) -> None:
+    calls: list[dict] = []
+    payload = {
+        "status": "SUCCESS",
+        "complete": True,
+        "decision": "COMPLETE",
+        "response": {"required": True, "text": "Done."},
+        "actions": [],
+    }
+
+    def fake_urlopen(request, timeout):
+        calls.append({"request": request, "timeout": timeout})
+        return FakeHTTPResponse({"message": {"role": "assistant", "content": json.dumps(payload)}})
+
+    monkeypatch.setattr(ollama_module, "urlopen", fake_urlopen)
+    result = LocalOrchestrator(OllamaConfig(model="qwen-test", keep_alive="30m")).process(context())
+
+    sent = json.loads(calls[0]["request"].data.decode("utf-8"))
+    system = sent["messages"][0]
+    user = json.loads(sent["messages"][1]["content"])
+    assert result.response.text == "Done."
+    assert system["role"] == "system"
+    assert "Nexus Orchestrator" in system["content"]
+    assert "OrchestratorResult" in system["content"]
+    assert user["current_event"]["event_id"] == "event-1"
+    assert user["context"]["working_context"]["execution_history"]
+    assert sent["format"]["required"] == ["status", "complete", "response", "actions"]
+    assert sent["keep_alive"] == "30m"
+    assert calls[0]["timeout"] == 180.0
+
+
+def test_local_orchestrator_accepts_fenced_json_and_rejects_malformed_actions(monkeypatch) -> None:
+    payload = {"status": "SUCCESS", "complete": True, "response": {"required": True, "text": "Done."}, "actions": []}
+    monkeypatch.setattr(ollama_module, "urlopen", lambda *_args, **_kwargs: FakeHTTPResponse({"message": {"content": f"```json\n{json.dumps(payload)}\n```"}}))
+    assert LocalOrchestrator(OllamaConfig()).process(context()).response.text == "Done."
+
+    malformed = {"status": "SUCCESS", "complete": False, "response": {"required": False, "text": ""}, "actions": ["not-an-object"]}
+    monkeypatch.setattr(ollama_module, "urlopen", lambda *_args, **_kwargs: FakeHTTPResponse({"message": {"content": json.dumps(malformed)}}))
+    result = LocalOrchestrator(OllamaConfig()).process(context())
+    assert result.status == "ERROR"
+    assert result.error["code"] == "OLLAMA_PROVIDER_ERROR"
+
+
+def test_local_provider_factory_uses_existing_orchestrator_contract() -> None:
+    orchestrator = create_orchestrator("local", config={"model": "qwen-test", "timeout_seconds": 12})
+    assert isinstance(orchestrator, LocalOrchestrator)
+    assert isinstance(orchestrator, Orchestrator)
+    assert orchestrator.config.model == "qwen-test"
+    assert orchestrator.config.timeout_seconds == 12
