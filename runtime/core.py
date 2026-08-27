@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import uuid
 from concurrent.futures import Future
@@ -31,6 +32,24 @@ VALID_EVENT_TYPES = {
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def context_builder_enabled_from_environment() -> bool:
+    """Return whether event enrichment is enabled for this runtime process.
+
+    ``NEXUS_CONTEXT_BUILDER_ENABLED=0`` is useful on constrained local-model
+    hosts where the raw event should go directly to the orchestrator.  The
+    setting is deliberately server-side: a client must not be able to disable
+    memory/context enrichment for every other client.
+    """
+    value = os.getenv("NEXUS_CONTEXT_BUILDER_ENABLED", "1").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        "NEXUS_CONTEXT_BUILDER_ENABLED must be one of: 1, 0, true, false, yes, no, on, off."
+    )
 
 
 class Event:
@@ -195,6 +214,7 @@ class NexusRuntime:
         plugin_registry: PluginRegistry | None = None,
         orchestrator: Orchestrator | None = None,
         context_builder: ContextBuilder | None = None,
+        context_builder_enabled: bool | None = None,
         log_path: str = "logs/nexus_runtime.log",
     ) -> None:
         self.registry = plugin_registry or PluginRegistry()
@@ -207,7 +227,18 @@ class NexusRuntime:
         self._lock = threading.Lock()
         self._future_map: dict[str, Future] = {}
         self.trace = RuntimeTrace(log_path)
-        self.context_builder = context_builder or ContextBuilder(self.registry, trace=self.trace)
+        self.context_builder_enabled = (
+            context_builder_enabled
+            if context_builder_enabled is not None
+            else context_builder_enabled_from_environment()
+        )
+        self.context_builder = (
+            context_builder
+            if self.context_builder_enabled
+            else None
+        )
+        if self.context_builder is None and self.context_builder_enabled:
+            self.context_builder = ContextBuilder(self.registry, trace=self.trace)
         self.orchestrator = orchestrator or create_orchestrator(trace=self.trace.record)
         self.cycle_config = OrchestrationCycleConfig()
 
@@ -287,7 +318,7 @@ class NexusRuntime:
             ExecutionPlanValidator(self.registry),
             PluginRouter(self.registry),
             self.cycle_config,
-            context_builder=self.context_builder.build,
+            context_builder=self.context_builder.build if self.context_builder is not None else None,
             trace=self.trace,
         )
         result = cycle.run(context)

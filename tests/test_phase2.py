@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from orchestrators import ActionRequest, DummyOrchestrator, OrchestratorContext, OrchestratorResult
-from orchestrators.prompt_loader import build_system_instruction
+from orchestrators.prompt_loader import build_orchestrator_request, build_system_instruction
 from runtime import ContextBuilder, Event, ExecutionPlanValidator, NexusRuntime, PluginRegistry, PluginRouter
 
 
@@ -153,3 +153,16 @@ def test_prompt_loader_composes_versioned_instructions_and_runtime_data() -> Non
     assert "AI operating system orchestrator" in prompt
     assert '"ECHO"' in prompt
     assert "available plugin metadata" in prompt
+
+
+def test_orchestrator_request_keeps_runtime_metadata_out_of_system_context() -> None:
+    runtime_info = {"plugins": {"fake": {"actions": ["ECHO"]}}}
+    context = OrchestratorContext(
+        event={"event_id": "evt", "type": "SYSTEM_EVENT", "source": "test", "data": {}},
+        system_context={"runtime": runtime_info, "runtime_state": runtime_info, "device": "laptop"},
+    )
+
+    request = build_orchestrator_request(context)
+
+    assert request.context["runtime"] == runtime_info
+    assert request.context["system_context"] == {"device": "laptop"}

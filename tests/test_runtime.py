@@ -120,3 +120,38 @@ def test_runtime_event_path_uses_injected_context_builder() -> None:
     assert result["termination_reason"] == "COMPLETED"
     assert calls
     assert calls[0]["type"] == "USER_MESSAGE"
+
+
+def test_runtime_can_bypass_context_builder_for_all_events() -> None:
+    received_contexts: list[object] = []
+
+    class RecordingOrchestrator(DummyOrchestrator):
+        def process(self, context):
+            received_contexts.append(context)
+            return super().process(context)
+
+    runtime = NexusRuntime(
+        orchestrator=RecordingOrchestrator(),
+        context_builder_enabled=False,
+    )
+    runtime.start()
+    try:
+        result = runtime.submit_event({"type": "USER_MESSAGE", "source": "test", "data": {"text": "hello"}})
+    finally:
+        runtime.stop()
+
+    assert result["status"] == "SUCCESS"
+    assert runtime.context_builder is None
+    assert len(received_contexts) == 1
+    assert received_contexts[0].event["data"] == {"text": "hello"}
+    assert received_contexts[0].memories == []
+    assert received_contexts[0].working_context["execution_history"] == []
+
+
+def test_runtime_reads_numeric_context_builder_switch(monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_CONTEXT_BUILDER_ENABLED", "0")
+
+    runtime = NexusRuntime(orchestrator=DummyOrchestrator())
+
+    assert runtime.context_builder_enabled is False
+    assert runtime.context_builder is None

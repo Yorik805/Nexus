@@ -21,6 +21,17 @@ def build_system_instruction(runtime_info: dict[str, Any] | None = None) -> str:
 def build_orchestrator_request(context: Any, runtime_info: dict[str, Any] | None = None):
     from .base import OrchestratorRequest
 
+    system_context = dict(context.system_context)
+    runtime = runtime_info or system_context.get("runtime", {})
+    # Runtime plugin metadata is supplied once in the dedicated ``runtime``
+    # field below.  The orchestration cycle also preserves it in
+    # ``system_context`` (and ContextBuilder may expose the same value as
+    # ``runtime_state``), which needlessly makes each local-model prompt much
+    # larger without adding information.
+    system_context.pop("runtime", None)
+    if system_context.get("runtime_state") == runtime:
+        system_context.pop("runtime_state")
+
     return OrchestratorRequest(
         system_instruction=load_prompt("system"),
         developer_instruction=load_prompt("developer"),
@@ -30,8 +41,8 @@ def build_orchestrator_request(context: Any, runtime_info: dict[str, Any] | None
             "memories": context.memories,
             "working_context": context.working_context,
             "active_tasks": context.active_tasks,
-            "system_context": context.system_context,
-            "runtime": runtime_info or context.system_context.get("runtime", {}),
+            "system_context": system_context,
+            "runtime": runtime,
         },
         current_event=context.event,
     )
