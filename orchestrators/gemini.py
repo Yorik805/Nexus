@@ -87,9 +87,11 @@ class GeminiOrchestrator(Orchestrator):
                 last_error = (code, str(exc))
                 if code in {"AUTHENTICATION_FAILED", "RATE_LIMITED", "RESOURCE_EXHAUSTED", "UNAVAILABLE"}:
                     self.credentials.mark_unavailable(credential)
+                if code == "SCHEMA_VALIDATION_FAILED":
+                    break
                 if attempt + 1 < max_attempts:
                     time.sleep(self.config.retry_backoff_seconds * (2 ** attempt))
-                print(f"[NEXUS:gemini.rotate] event_id={context.event.get('event_id')} attempt={attempt + 1}/{max_attempts} model={self.config.model}")
+                print(f"[NEXUS:gemini.retry] event_id={context.event.get('event_id')} attempt={attempt + 1}/{max_attempts} error={code} model={self.config.model}")
             attempt += 1
 
         code, message = last_error or ("PROVIDER_ERROR", "Gemini request failed.")
@@ -165,10 +167,13 @@ class GeminiOrchestrator(Orchestrator):
             raw = getattr(response, "text", None)
         if isinstance(raw, str):
             raw = raw.strip()
-            if raw.startswith("```") and raw.endswith("```"):
+            if "```json" in raw:
+                start = raw.find("```json") + 7
+                end = raw.find("```", start)
+                if end != -1:
+                    raw = raw[start:end].strip()
+            elif raw.startswith("```") and raw.endswith("```"):
                 raw = raw[3:-3].strip()
-                if raw.lower().startswith("json"):
-                    raw = raw[4:].lstrip()
             raw = json.loads(raw)
         if not isinstance(raw, dict):
             raise ValueError("Gemini returned a non-object structured response.")
