@@ -53,6 +53,9 @@ class CredentialPool:
     def has_credentials(self) -> bool:
         return bool(self._credentials)
 
+    def __len__(self) -> int:
+        return len(self._credentials)
+
     @staticmethod
     def _environment_credentials() -> list[str]:
         multiple = os.getenv("GEMINI_API_KEYS", "")

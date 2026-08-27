@@ -52,7 +52,7 @@ class GeminiOrchestrator(Orchestrator):
         trace: Callable[..., None] | None = None,
     ) -> None:
         self.config = config or GeminiConfig.from_environment()
-        self.credentials = credential_pool or CredentialPool.from_environment(self.config.credential_cooldown_seconds)
+        self.credentials = credential_pool if credential_pool is not None else CredentialPool.from_environment(self.config.credential_cooldown_seconds)
         self._client_factory = client_factory or self._default_client_factory
         self.trace = trace
 
@@ -63,9 +63,10 @@ class GeminiOrchestrator(Orchestrator):
         request = build_orchestrator_request(context)
         if self.trace:
             self.trace("provider.request.start", context.event.get("event_id"), provider="gemini", model=self.config.model)
-        attempts = self.config.max_retries + 1
+        max_attempts = max(len(self.credentials), self.config.max_retries + 1)
         last_error: tuple[str, str] | None = None
-        for _attempt in range(attempts):
+        attempt = 0
+        while attempt < max_attempts:
             credential = self.credentials.acquire()
             if credential is None:
                 return self._error("CREDENTIALS_UNAVAILABLE", "All Gemini API credentials are temporarily unavailable.")
@@ -86,8 +87,10 @@ class GeminiOrchestrator(Orchestrator):
                 last_error = (code, str(exc))
                 if code in {"AUTHENTICATION_FAILED", "RATE_LIMITED", "RESOURCE_EXHAUSTED", "UNAVAILABLE"}:
                     self.credentials.mark_unavailable(credential)
-                if _attempt + 1 < attempts:
-                    time.sleep(self.config.retry_backoff_seconds * (2 ** _attempt))
+                if attempt + 1 < max_attempts:
+                    time.sleep(self.config.retry_backoff_seconds * (2 ** attempt))
+                print(f"[NEXUS:gemini.rotate] event_id={context.event.get('event_id')} attempt={attempt + 1}/{max_attempts} model={self.config.model}")
+            attempt += 1
 
         code, message = last_error or ("PROVIDER_ERROR", "Gemini request failed.")
         return self._error(code, "Gemini request failed without exposing credentials.", details=message)
@@ -242,3 +245,4 @@ class GeminiOrchestrator(Orchestrator):
             api_key=api_key,
             http_options={"timeout": int(self.config.timeout_seconds * 1000)},
         )
+
