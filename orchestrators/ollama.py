@@ -111,11 +111,12 @@ class OllamaOrchestrator(Orchestrator):
                 "status": {"type": "string"},
                 "complete": {"type": "boolean"},
                 "decision": {"type": "string", "enum": ["CONTINUE", "NO_ACTION", "COMPLETE"]},
-                "response": {"type": "object", "required": ["required", "text"], "properties": {"required": {"type": "boolean"}, "text": {"type": "string"}, "metadata": {"type": "object"}}},
-                "actions": {"type": "array", "items": {"type": "object", "required": ["action_id", "plugin", "action", "data"], "properties": {"action_id": {"type": "string"}, "plugin": {"type": "string"}, "action": {"type": "string"}, "data": {"type": "object", "properties": properties}, "depends_on": {"type": "array", "items": {"type": "string"}}}}},
+                "response": {"type": "object", "required": ["required", "text"], "additionalProperties": False, "properties": {"required": {"type": "boolean"}, "text": {"type": "string"}, "metadata": {"type": "object"}}},
+                "actions": {"type": "array", "items": {"type": "object", "required": ["action_id", "plugin", "action", "data"], "additionalProperties": False, "properties": {"action_id": {"type": "string"}, "plugin": {"type": "string"}, "action": {"type": "string"}, "data": {"type": "object", "additionalProperties": False, "properties": properties}, "depends_on": {"type": "array", "items": {"type": "string"}}}}},
                 "background_tasks": {"type": "array", "items": {"type": "object"}},
                 "metadata": {"type": "object"},
             },
+            "additionalProperties": False,
         }
 
     @staticmethod
