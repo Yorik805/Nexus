@@ -225,7 +225,7 @@ def test_local_orchestrator_accepts_fenced_json_and_rejects_malformed_actions(mo
     monkeypatch.setattr(ollama_module, "urlopen", lambda *_args, **_kwargs: FakeHTTPResponse({"message": {"content": json.dumps(malformed)}}))
     result = LocalOrchestrator(OllamaConfig()).process(context())
     assert result.status == "ERROR"
-    assert result.error["code"] == "OLLAMA_PROVIDER_ERROR"
+    assert result.error["code"] == "SCHEMA_VALIDATION_FAILED"
 
 
 def test_local_provider_factory_uses_existing_orchestrator_contract() -> None:
@@ -234,3 +234,4 @@ def test_local_provider_factory_uses_existing_orchestrator_contract() -> None:
     assert isinstance(orchestrator, Orchestrator)
     assert orchestrator.config.model == "qwen-test"
     assert orchestrator.config.timeout_seconds == 12
+
