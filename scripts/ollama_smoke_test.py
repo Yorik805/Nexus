@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sys
@@ -80,6 +80,7 @@ def check_model_exists(config: OllamaConfig) -> bool:
 
 def check_direct_chat_request(config: OllamaConfig) -> bool:
     step("Step 3: Direct Nexus schema-constrained request to /api/chat")
+    print("  Note: CPU-only Ollama can be slow; using configured timeout.")
     try:
         payload = {
             "model": config.model,
@@ -134,7 +135,7 @@ def check_direct_chat_request(config: OllamaConfig) -> bool:
         status, body = _http_post(
             f"{config.base_url.rstrip('/')}/api/chat",
             payload,
-            timeout=60.0,
+            timeout=config.timeout_seconds,
         )
         print(f"  POST /api/chat -> HTTP {status} ({len(body)} bytes)")
         raw = json.loads(body.decode("utf-8"))
@@ -208,7 +209,7 @@ def check_full_runtime(config: OllamaConfig) -> bool:
                     "source": "smoke_test",
                     "data": {"text": "ping"},
                 },
-                timeout=120.0,
+                timeout=config.timeout_seconds,
             )
             print(f"  Runtime result status={result.get('status')}, termination_reason={result.get('termination_reason')}")
             if result.get("status") == "ERROR":
