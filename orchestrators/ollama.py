@@ -46,6 +46,7 @@ class OllamaOrchestrator(Orchestrator):
     def process(self, context: OrchestratorContext) -> OrchestratorResult:
         request = build_orchestrator_request(context)
         event_id = context.event.get("event_id")
+        print(f"[NEXUS:ollama.process] model={self.config.model} event_id={event_id}")
         if self.trace:
             self.trace("provider.request.start", event_id, provider="ollama", model=self.config.model)
         attempts = self.config.max_retries + 1
@@ -90,10 +91,16 @@ class OllamaOrchestrator(Orchestrator):
             ],
         }
         body = json.dumps(payload).encode("utf-8")
+        payload_size = len(body)
+        system_msg = payload.get("messages", [{}])[0].get("content", "")
+        user_msg = payload.get("messages", [{}])[-1].get("content", "")
+        print(f"[NEXUS:ollama.request] model={self.config.model} payload_bytes={payload_size} messages={len(payload.get('messages', []))} system_bytes={len(system_msg.encode('utf-8'))} user_bytes={len(user_msg.encode('utf-8'))}")
         try:
             http_request = Request(f"{self.config.base_url.rstrip('/')}/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})
             with urlopen(http_request, timeout=self.config.timeout_seconds) as response:
                 result = json.loads(response.read().decode("utf-8"))
+                response_size = len(json.dumps(result).encode("utf-8"))
+                print(f"[NEXUS:ollama.response] model={self.config.model} response_bytes={response_size}")
         except HTTPError as exc:
             raise RuntimeError(f"Ollama returned HTTP {exc.code}.") from exc
         except URLError as exc:
@@ -180,4 +187,5 @@ class OllamaOrchestrator(Orchestrator):
             metadata=raw.get("metadata", {}) if isinstance(raw.get("metadata", {}), dict) else {},
             error=raw.get("error") if isinstance(raw.get("error"), dict) else None,
         )
+
 
