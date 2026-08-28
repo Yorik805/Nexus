@@ -106,12 +106,18 @@ class ExecutionPlanValidator:
                 continue
             contract = plugin.contracts.get(action.action.upper(), {})
             required = contract.get("required", {}) if isinstance(contract, dict) else {}
+            optional = contract.get("optional", {}) if isinstance(contract, dict) else {}
             for field_name, field_schema in required.items():
                 if field_name not in action.data:
                     errors.append(ValidationIssue("MISSING_ACTION_FIELD", f"{action.action} requires data field: {field_name}.", action_id))
                 elif not self._matches_type(action.data[field_name], field_schema):
                     errors.append(ValidationIssue("INVALID_ACTION_FIELD", f"{field_name} has an invalid type or value.", action_id))
-            if any(issue.action_id == action_id and issue.code in {"MISSING_ACTION_FIELD", "INVALID_ACTION_FIELD"} for issue in errors):
+            if contract:
+                allowed_fields = set(required.keys()) | set(optional.keys())
+                unknown_fields = set(action.data.keys()) - allowed_fields
+                for unknown_field in unknown_fields:
+                    errors.append(ValidationIssue("UNKNOWN_ACTION_FIELD", f"Unknown field in {action.action} data: {unknown_field}.", action_id))
+            if any(issue.action_id == action_id and issue.code in {"MISSING_ACTION_FIELD", "INVALID_ACTION_FIELD", "UNKNOWN_ACTION_FIELD"} for issue in errors):
                 continue
             missing_dependencies = [dependency for dependency in action.depends_on if dependency not in all_ids]
             if missing_dependencies:

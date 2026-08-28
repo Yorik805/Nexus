@@ -91,21 +91,57 @@ class NexusConnection:
 
 if __name__ == "__main__":
     import sys
+    import tempfile
+    import os
+
+    def _record_microphone(duration_seconds: int = 5) -> str:
+        """Record audio from microphone and return path to temp file."""
+        try:
+            import sounddevice as sd
+            import numpy as np
+        except ImportError:
+            raise RuntimeError(
+                "Microphone recording requires: pip install sounddevice numpy"
+            )
+        fs = 16000
+        print(f"Recording {duration_seconds} seconds of audio...")
+        audio = sd.rec(int(duration_seconds * fs), samplerate=fs, channels=1, dtype="float32")
+        sd.wait()
+        # Normalize and convert to int16 for whisper
+        audio_int16 = (audio.flatten() * 32767).astype("int16")
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        import wave
+        with wave.open(tmp.name, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(fs)
+            wf.writeframes(audio_int16.tobytes())
+        return tmp.name
+
+    def _get_text_via_stt() -> str:
+        """Try microphone recording + transcription, fallback to text input."""
+        try:
+            audio_path = _record_microphone(5)
+            print(f"Recorded: {audio_path}")
+            text = _transcribe_audio(audio_path)
+            os.unlink(audio_path)
+            return text
+        except RuntimeError as exc:
+            print(f"STT unavailable ({exc})")
+            return input("Type your message: ").strip()
 
     host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
     device_id = sys.argv[3] if len(sys.argv) > 3 else "laptop_1"
-    
+
     conn = NexusConnection(host, port)
     print(conn.register(device_id, "laptop"))
-    
-    # Check for pending messages
+
     if "--poll" in sys.argv:
         pending = conn.receive_pending(device_id)
         print("Pending messages:", pending)
         sys.exit(0)
-    
-    # Get text from audio or command line
+
     text = None
     if "--audio" in sys.argv:
         audio_index = sys.argv.index("--audio")
@@ -125,15 +161,15 @@ if __name__ == "__main__":
             print("Error: --text requires a message")
             sys.exit(1)
     else:
-        text = sys.argv[4] if len(sys.argv) > 4 else "Hello from terminal client"
-    
+        # No args: auto-run STT
+        text = _get_text_via_stt()
+
     if not text:
         print("Error: No text to send")
         sys.exit(1)
-    
+
     resp = conn.send_user_message(device_id, text)
     print("Response:", conn.receive_response(resp))
-
 class MockNexusConnection:
     """Offline transport for client tests and microphone/TTS demos."""
 
