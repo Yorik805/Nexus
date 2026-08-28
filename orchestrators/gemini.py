@@ -24,7 +24,7 @@ class GeminiConfig:
     timeout_seconds: float = 30.0
     max_retries: int = 2
     retry_backoff_seconds: float = 1.0
-    max_output_tokens: int = 8192
+    max_output_tokens: int = 16000
     credential_cooldown_seconds: float = 30.0
 
     @classmethod

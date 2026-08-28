@@ -43,7 +43,7 @@ class NexusConnection:
         host = self.host
         port = self.port or (443 if self.protocol == "https" else 80)
         try:
-            conn = http.client.HTTPConnection(host, port, timeout=self.timeout or 30)
+            conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
             conn.request(method, path, body=body, headers={"Accept": "application/json", "Content-Type": "application/json"})
             response = conn.getresponse()
             data = response.read().decode("utf-8")
