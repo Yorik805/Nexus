@@ -9,7 +9,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from runtime import NexusRuntime
+from runtime import NexusRuntime, get_device_store, get_device_store
 
 
 def load_dotenv() -> None:
@@ -59,20 +59,40 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
         try:
             payload = self._json_body()
             if self.path == "/devices/register":
-                result = {"status": "SUCCESS", "device_id": payload.get("device_id")}
+                device_id = payload.get("device_id")
+                device_type = payload.get("device_type", "unknown")
+                if not device_id:
+                    self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
+                    return
+                store = get_device_store()
+                device = store.register_device(device_id, device_type)
+                result = {"status": "SUCCESS", "device": device}
             elif self.path == "/devices/disconnect":
-                result = {"status": "SUCCESS", "device_id": payload.get("device_id")}
+                device_id = payload.get("device_id")
+                if not device_id:
+                    self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
+                    return
+                store = get_device_store()
+                store.unregister_device(device_id)
+                result = {"status": "SUCCESS", "message": f"Device {device_id} disconnected."}
             elif self.path == "/message":
                 text = payload.get("text")
+                device_id = payload.get("device_id", "http-client")
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError("text must be a non-empty string.")
+                
+                # Store device if not already known
+                store = get_device_store()
+                if not store.get_device(device_id):
+                    store.register_device(device_id, "http-client")
+                
                 event = {
                     "type": "USER_MESSAGE",
-                    "source": str(payload.get("device_id", "http-client")),
+                    "source": str(device_id),
                     "data": {"text": text},
                 }
                 print(f"Nexus event received: {event['type']} from {event['source']}")
-                result = self.server.runtime.submit_event(event, timeout=180)
+                result = self.server.runtime.submit_event(event, timeout=None)  # NO TIMEOUT
             else:
                 self._write_json(404, {"status": "ERROR", "message": "Unknown endpoint."})
                 return

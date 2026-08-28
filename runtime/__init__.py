@@ -1,6 +1,6 @@
 from orchestrators import DummyOrchestrator
 
-from .core import ContextBuilder, Event, EventQueue, NexusRuntime
+from .core import ContextBuilder, Event, EventQueue, NexusRuntime, get_device_store
 from .orchestration_cycle import OrchestrationCycle, OrchestrationCycleConfig
 from .registry import PluginRegistry
 from .router import PluginRouter
@@ -22,4 +22,5 @@ __all__ = [
     "ValidationResult",
     "ContextHistoryManager",
     "RuntimeTrace",
+    "get_device_store",
 ]

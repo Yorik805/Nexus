@@ -23,6 +23,7 @@ class PluginRegistry:
         self.register_module("memory", "plugins.memory")
         self.register_module("filesystem", "plugins.filesystem")
         self.register_module("terminal", "plugins.terminal")
+        self.register_module("devices", "plugins.devices")
 
     def register_module(self, name: str, module_name: str) -> PluginMetadata:
         module = import_module(module_name)

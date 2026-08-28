@@ -16,6 +16,73 @@ from .router import PluginRouter
 from .validator import ExecutionPlanValidator
 from .observability import RuntimeTrace
 
+
+
+class DeviceStore:
+    """In-memory store for connected devices and their pending messages."""
+    
+    def __init__(self) -> None:
+        self._devices: dict[str, dict[str, Any]] = {}
+        self._pending: dict[str, list[dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+    
+    def register_device(self, device_id: str, device_type: str) -> dict[str, Any]:
+        with self._lock:
+            device = {
+                "device_id": device_id,
+                "device_type": device_type,
+                "connected_at": utc_now_iso(),
+                "last_seen": utc_now_iso(),
+            }
+            self._devices[device_id] = device
+            if device_id not in self._pending:
+                self._pending[device_id] = []
+            return device
+    
+    def unregister_device(self, device_id: str) -> None:
+        with self._lock:
+            self._devices.pop(device_id, None)
+            self._pending.pop(device_id, None)
+    
+    def get_device(self, device_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return self._devices.get(device_id)
+    
+    def list_devices(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._devices.values())
+    
+    def add_pending_message(self, device_id: str, message: str) -> str:
+        import uuid
+        message_id = str(uuid.uuid4())
+        with self._lock:
+            if device_id not in self._pending:
+                self._pending[device_id] = []
+            self._pending[device_id].append({
+                "message_id": message_id,
+                "message": message,
+                "timestamp": utc_now_iso(),
+            })
+            device = self._devices.get(device_id)
+            if device:
+                device["last_seen"] = utc_now_iso()
+        return message_id
+    
+    def get_pending_messages(self, device_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._pending.get(device_id, []))
+    
+    def get_all_pending_messages(self) -> dict[str, list[dict[str, Any]]]:
+        with self._lock:
+            return {k: list(v) for k, v in self._pending.items()}
+
+
+def get_device_store() -> DeviceStore:
+    """Return the global device store instance."""
+    if not hasattr(get_device_store, "_instance"):
+        get_device_store._instance = DeviceStore()  # type: ignore
+    return get_device_store._instance  # type: ignore
+
 VALID_EVENT_TYPES = {
     "USER_MESSAGE",
     "SYSTEM_EVENT",
