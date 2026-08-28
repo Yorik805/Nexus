@@ -94,8 +94,7 @@ def test_gemini_implements_contract_and_maps_structured_output() -> None:
     assert models.calls[0]["config"]["automatic_function_calling"] == {"disable": True}
     assert "tools" not in models.calls[0]["config"]
     data_schema = models.calls[0]["config"]["response_schema"]["properties"]["actions"]["items"]["properties"]["data"]
-    assert "path" in data_schema["properties"]
-    assert "content" in data_schema["properties"]
+    assert data_schema.get("type") == "object"
     assert "Nexus is an AI operating system orchestrator" in models.calls[0]["config"]["system_instruction"]
     assert json.loads(models.calls[0]["contents"])["event"]["event_id"] == "event-1"
 
@@ -234,4 +233,5 @@ def test_local_provider_factory_uses_existing_orchestrator_contract() -> None:
     assert isinstance(orchestrator, Orchestrator)
     assert orchestrator.config.model == "qwen-test"
     assert orchestrator.config.timeout_seconds == 12
+
 

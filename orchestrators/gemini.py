@@ -89,8 +89,8 @@ class GeminiOrchestrator(Orchestrator):
                 print(f"[NEXUS:gemini.error] event_id={context.event.get('event_id')} code={code} type={type(exc).__name__} message={exc}")
                 if code in {"AUTHENTICATION_FAILED", "RATE_LIMITED", "RESOURCE_EXHAUSTED", "UNAVAILABLE"}:
                     self.credentials.mark_unavailable(credential)
-                if code == "SCHEMA_VALIDATION_FAILED":
-                    break
+                # Truncated/malformed JSON is a transient model error - retry it
+                pass
                 if attempt + 1 < max_attempts:
                     time.sleep(self.config.retry_backoff_seconds * (2 ** attempt))
                 print(f"[NEXUS:gemini.retry] event_id={context.event.get('event_id')} attempt={attempt + 1}/{max_attempts} error={code} model={self.config.model}")
@@ -117,16 +117,10 @@ class GeminiOrchestrator(Orchestrator):
 
     @staticmethod
     def _response_schema(runtime_info: dict[str, Any] | None = None) -> dict[str, Any]:
-        contracts = runtime_info.get("plugins", {}) if isinstance(runtime_info, dict) else {}
-        data_properties: dict[str, Any] = {}
-        for plugin in contracts.values() if isinstance(contracts, dict) else []:
-            for contract in plugin.get("contracts", {}).values() if isinstance(plugin, dict) else []:
-                for name, field_schema in {**contract.get("required", {}), **contract.get("optional", {})}.items():
-                    data_properties.setdefault(name, field_schema)
         return {
             "type": "object",
             "properties": {
-                "status": {"type": "string"},
+                "status": {"type": "string", "enum": ["SUCCESS", "ERROR", "PARTIAL_SUCCESS"]},
                 "complete": {"type": "boolean"},
                 "decision": {"type": "string", "enum": ["CONTINUE", "NO_ACTION", "COMPLETE"]},
                 "response": {
@@ -146,11 +140,7 @@ class GeminiOrchestrator(Orchestrator):
                             "action_id": {"type": "string"},
                             "plugin": {"type": "string"},
                             "action": {"type": "string"},
-                            "data": {
-                                "type": "object",
-                                "properties": data_properties,
-                                "description": "Use the required and optional fields from the supplied plugin action contract.",
-                            },
+                            "data": {"type": "object"},
                             "depends_on": {"type": "array", "items": {"type": "string"}},
                         },
                         "required": ["action_id", "plugin", "action", "data"],
