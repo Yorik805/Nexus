@@ -68,12 +68,25 @@ class NexusConnection:
         if message_id:
             payload["message_id"] = message_id
         result = self._request("POST", "/message", payload)
-        response = result.get("response")
-        if isinstance(response, dict):
-            return response
+        # Return the full result so caller can check for pending_messages
         return result
 
     def receive_response(self, response: dict[str, Any]) -> str:
+        # Check for pending messages from devices.SEND
+        pending = response.get("pending_messages", [])
+        if pending:
+            messages = []
+            for msg in pending:
+                if isinstance(msg, dict):
+                    messages.append(msg.get("message", str(msg)))
+                else:
+                    messages.append(str(msg))
+            # Return pending messages joined with newlines
+            text = "\n".join(messages)
+            if text.strip():
+                return text
+        
+        # Fallback to response.text
         nested = response.get("response")
         if isinstance(nested, dict):
             response = nested
@@ -169,7 +182,16 @@ if __name__ == "__main__":
         sys.exit(1)
 
     resp = conn.send_user_message(device_id, text)
-    print("Response:", conn.receive_response(resp))
+    pending = resp.get("pending_messages", [])
+    if pending:
+        print("Pending replies:")
+        for msg in pending:
+            if isinstance(msg, dict):
+                print(f"  - {msg.get('message', msg)}")
+            else:
+                print(f"  - {msg}")
+    else:
+        print("Response:", conn.receive_response(resp))
 class MockNexusConnection:
     """Offline transport for client tests and microphone/TTS demos."""
 

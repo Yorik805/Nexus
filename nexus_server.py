@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """HTTP gateway for the Nexus runtime."""
 
 from __future__ import annotations
@@ -101,10 +101,15 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 }
                 print(f"Nexus event received: {event['type']} from {event['source']}")
                 result = self.server.runtime.submit_event(event, timeout=None)  # NO TIMEOUT
+                
+                # Check for any pending messages for this device
+                store = get_device_store()
+                pending = store.get_pending_messages(device_id)
+                if pending:
+                    result["pending_messages"] = pending
             else:
                 self._write_json(404, {"status": "ERROR", "message": "Unknown endpoint."})
                 return
-            self._write_json(200, result)
         except (ValueError, json.JSONDecodeError) as exc:
             self._write_json(400, {"status": "ERROR", "message": str(exc)})
         except Exception as exc:
