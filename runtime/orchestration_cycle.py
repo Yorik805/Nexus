@@ -154,15 +154,21 @@ class OrchestrationCycle:
                 termination_reason = "NO_ACTION"
                 status = "IDLE"
                 break
-            if (decision == "COMPLETE" or orchestrator_result.complete) and not failed_action_ids and not validation.errors:
+            if decision == "COMPLETE":
+                termination_reason = "COMPLETED"
+                if failed_action_ids or validation.errors:
+                    final_response = {"required": True, "text": "The requested actions have not completed successfully.", "metadata": {}}
+                    status = "PARTIAL_SUCCESS" if had_validation_errors else "SUCCESS"
+                else:
+                    status = "SUCCESS" if not had_validation_errors else "PARTIAL_SUCCESS"
+                break
+            if orchestrator_result.complete and not failed_action_ids and not validation.errors:
                 termination_reason = "COMPLETED"
                 if orchestrator_result.status != "SUCCESS":
                     status = orchestrator_result.status
                 else:
                     status = "PARTIAL_SUCCESS" if had_validation_errors else "SUCCESS"
                 break
-            if decision == "COMPLETE" or orchestrator_result.complete:
-                final_response = {"required": True, "text": "The requested actions have not completed successfully.", "metadata": {}}
             if repeated_plans >= self.config.repeated_plan_limit:
                 termination_reason = "NO_PROGRESS"
                 status = "NO_PROGRESS"

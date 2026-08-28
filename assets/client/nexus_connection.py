@@ -14,7 +14,7 @@ class NexusConnection:
     host: str
     port: int | None = None
     protocol: str = "http"
-    timeout: float = 30.0
+    timeout: float | None = None
 
     def __post_init__(self) -> None:
         self.host = self.host.rstrip("/")

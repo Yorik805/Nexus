@@ -106,12 +106,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     elif step == "provider.response.received":
                         text_len = details.get("text_length", 0)
                         message = f"{provider['name']} response received \u00b7 {text_len} chars"
+                        response_text = details.get("response_text", "")
                         response = {
                             "model": provider["model"],
                             "status": 200,
                             "latency": provider.get("latency", "\u2014"),
                             "tokens": str(text_len),
-                            "detail": "(response content available in execution history)",
+                            "detail": response_text or f"Response received ({text_len} chars). Click to inspect.",
                         }
                     elif step == "provider.request.error":
                         err_code = details.get("error_code", "ERROR")

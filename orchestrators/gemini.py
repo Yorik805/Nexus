@@ -73,8 +73,9 @@ class GeminiOrchestrator(Orchestrator):
             try:
                 client = self._client_factory(credential.value)
                 response = self._generate(client, request)
+                raw_text = getattr(response, "text", "") or ""
                 if self.trace:
-                    self.trace("provider.response.received", context.event.get("event_id"), provider="gemini", parsed_present=getattr(response, "parsed", None) is not None, text_length=len(getattr(response, "text", "") or ""))
+                    self.trace("provider.response.received", context.event.get("event_id"), provider="gemini", parsed_present=getattr(response, "parsed", None) is not None, text_length=len(raw_text), response_text=raw_text[:2000])
                 result = self._parse_response(response)
                 if self.trace:
                     self.trace("provider.response.parsed", context.event.get("event_id"), provider="gemini", decision=result.decision, action_count=len(result.actions))
@@ -251,4 +252,5 @@ class GeminiOrchestrator(Orchestrator):
             api_key=api_key,
             http_options={"timeout": int(self.config.timeout_seconds * 1000)},
         )
+
 
