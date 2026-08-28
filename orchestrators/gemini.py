@@ -20,7 +20,7 @@ from .prompt_loader import build_orchestrator_request
 
 @dataclass(frozen=True)
 class GeminiConfig:
-    model: str = "gemini-3.7-flash"
+    model: str = "gemini-3.6-flash"
     timeout_seconds: float = 30.0
     max_retries: int = 2
     retry_backoff_seconds: float = 1.0
