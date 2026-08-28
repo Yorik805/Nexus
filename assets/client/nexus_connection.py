@@ -71,6 +71,19 @@ class NexusConnection:
         return self._request("POST", "/devices/disconnect", {"device_id": device_id})
 
 
+if __name__ == "__main__":
+    import sys
+
+    host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
+    device_id = sys.argv[3] if len(sys.argv) > 3 else "laptop_1"
+    text = sys.argv[4] if len(sys.argv) > 4 else "Hello from terminal client"
+
+    conn = NexusConnection(host, port)
+    print(conn.register(device_id, "laptop"))
+    resp = conn.send_user_message(device_id, text)
+    print("Response:", conn.receive_response(resp))
+
 class MockNexusConnection:
     """Offline transport for client tests and microphone/TTS demos."""
 
