@@ -9,7 +9,7 @@ The top-level response object. Always return valid JSON matching this structure.
 ```json
 {
   "type": "object",
-  "required": ["status", "complete", "response", "actions"],
+  "required": ["status", "complete", "actions"],
   "properties": {
     "status": {"type": "string", "enum": ["SUCCESS", "ERROR", "PARTIAL_SUCCESS"]},
     "complete": {"type": "boolean"},
@@ -49,7 +49,7 @@ The top-level response object. Always return valid JSON matching this structure.
 - `status`: Overall result status. Use `SUCCESS` when the plan is valid and ready for execution. Use `ERROR` when the orchestrator itself cannot produce a valid plan.
 - `complete`: `true` only when the user's request is fully satisfied. Never infer completion from an empty action list.
 - `decision`: `CONTINUE` when more work is required, `NO_ACTION` when nothing should execute, `COMPLETE` when finished.
-- esponse: Internal output. Set equired=false unless the runtime itself needs structured output. To send a text reply to a device, use a devices.SEND action instead.
+- `response`: Optional. Defaults to `{"required": false, "text": ""}`. Only set `response.required = true` when the runtime itself needs structured output. To send a text reply to a device, use a `devices.SEND` action instead.
 - `actions`: Ordered list of plugin operations to execute. Each action is an `ActionRequest`.
 - `background_tasks`: Declarations of deferred work. These are declarations only; do not expect them to execute yet.
 - `metadata`: Optional structured metadata (intent, plan fingerprint, etc.).
@@ -78,7 +78,7 @@ Each item in the `actions` array.
 - `action_id`: Unique string identifier for this action. Used to correlate execution results back to the action.
 - `plugin`: Must be one of the plugin names provided in `runtime.plugins`.
 - `action`: Must be one of the actions listed in that plugin's contracts.
-- `data`: Object containing required and optional fields per the plugin action contract. Use only fields defined in the contract.
+- `data`: Object containing required and optional fields per the plugin action contract. Use only fields defined in the contract. Unknown fields will be rejected.
 - `depends_on`: Optional array of `action_id` strings. Actions listed here must succeed before this action executes.
 
 ## OrchestratorContext
@@ -128,52 +128,36 @@ The input you receive. For reference only; do not return this structure.
 
 ### Field Details
 
-- `event`: The current event being processed.
+- `event`: The current event being processed. `event.source` is the device ID that sent this event.
 - `user_context`: Persistent user profile and preferences.
 - `memories`: Automatically retrieved memories (if any) from ContextBuilder.
 - `working_context.execution_history`: Previous iterations with actions and results.
 - `working_context.last_execution_results`: Most recent plugin execution results.
 - `active_tasks`: Currently tracked tasks.
 - `system_context.runtime.plugins`: Available plugins and their action contracts.
+
 ## devices.SEND Example
 
-To reply to the device that sent the current event, use the devices plugin:
+To reply to the device that sent the current event, use the devices plugin. Replace `laptop_1` with the actual `event.source` value from the current event.
 
 ```json
 {
+  "status": "SUCCESS",
+  "complete": true,
   "decision": "COMPLETE",
+  "response": {"required": false, "text": ""},
   "actions": [
     {
       "action_id": "reply-to-device",
       "plugin": "devices",
       "action": "SEND",
       "data": {
-        "device_id": "<event.source>",
-        "message": "Your reply text here"
+        "device_id": "laptop_1",
+        "message": "Hello! I processed your request."
       }
     }
   ]
 }
 ```
 
-The `device_id` should match the `source` field of the current event. The runtime will deliver the message to that device.
-To reply to the device that sent the current event, use the devices plugin:
-
-```json
-{
-  "decision": "COMPLETE",
-  "actions": [
-    {
-      "action_id": "reply-to-device",
-      "plugin": "devices",
-      "action": "SEND",
-      "data": {
-        "device_id": "<event.source>",
-        "message": "Your reply text here"
-      }
-    }
-  ]
-}
-```
-
-The `device_id` should match the `source` field of the current event. The runtime will deliver the message to that device.
+The runtime will deliver this message to the device. Do NOT put user-facing text in `response.text` expecting the client to receive it directly.

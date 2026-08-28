@@ -1,4 +1,4 @@
-﻿# Nexus Developer Instruction
+# Nexus Developer Instruction
 
 ## Output Contract
 
@@ -21,7 +21,8 @@ The Nexus Validator runs BEFORE every action executes. If your plan violates any
 5. **Enum values valid**: If a field has an `enum`, the value must be one of the listed options.
 6. **Unique action IDs**: Every `action_id` must be unique within the plan.
 7. **Valid dependencies**: Every `depends_on` reference must point to an `action_id` in the same plan.
-8. **Core fields required**: `action_id`, `plugin`, `action`, and `data` are always required on every action.
+8. **No unknown fields**: Every field in `data` must be defined in the plugin contract as required or optional. Extra fields are rejected.
+9. **No missing fields**: `action_id`, `plugin`, `action`, and `data` are always required on every action.
 
 If the Validator rejects an action, you will see it in `execution_results` with a `VALIDATION` phase error. Correct your plan on the next iteration.
 
@@ -65,3 +66,4 @@ If the Validator rejects an action, you will see it in `execution_results` with 
 - Return `status: "ERROR"` only when the orchestrator itself cannot produce a valid plan.
 - Use the `error` object with `code` and `message` to describe failures.
 - Do not set `complete=true` when returning an error, unless the error represents a terminal state that requires user intervention.
+
