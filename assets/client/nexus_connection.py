@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 from dataclasses import dataclass
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 from typing import Any
 
 
@@ -41,19 +40,19 @@ class NexusConnection:
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        request = Request(
-            f"{self.base_url}{path}",
-            data=body,
-            method=method,
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-        )
+        host = self.host
+        port = self.port or (443 if self.protocol == "https" else 80)
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            raise ConnectionError(f"Nexus server returned HTTP {exc.code}.") from exc
-        except URLError as exc:
-            raise ConnectionError(f"Could not connect to Nexus server: {exc.reason}") from exc
+            conn = http.client.HTTPConnection(host, port, timeout=self.timeout or 30)
+            conn.request(method, path, body=body, headers={"Accept": "application/json", "Content-Type": "application/json"})
+            response = conn.getresponse()
+            data = response.read().decode("utf-8")
+            conn.close()
+            if response.status >= 400:
+                raise ConnectionError(f"Nexus server returned HTTP {response.status} {response.reason}.")
+            result = json.loads(data) if data else {}
+        except http.client.HTTPException as exc:
+            raise ConnectionError(f"HTTP error from Nexus server: {exc}") from exc
         except (OSError, json.JSONDecodeError) as exc:
             raise ConnectionError(f"Invalid response from Nexus server: {exc}") from exc
         if not isinstance(result, dict):

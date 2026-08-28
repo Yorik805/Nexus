@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """HTTP gateway for the Nexus runtime."""
 
 from __future__ import annotations
@@ -53,20 +53,30 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
-            print("HTTP client disconnected before the response was delivered.")
+            print(f"[NEXUS:http] Client disconnected during response to {self.path}")
+        except Exception as exc:
+            print(f"[NEXUS:http] Failed to write response for {self.path}: {exc}")
 
     def do_POST(self) -> None:
+        print(f"[NEXUS:http] {self.command} {self.path} from {self.address_string()}")
         try:
             payload = self._json_body()
             if self.path == "/devices/register":
+                print("[NEXUS:http] Handling /devices/register")
                 device_id = payload.get("device_id")
                 device_type = payload.get("device_type", "unknown")
                 if not device_id:
+                    print("[NEXUS:http] Missing device_id")
                     self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
                     return
+                print(f"[NEXUS:http] Getting device store...")
                 store = get_device_store()
+                print(f"[NEXUS:http] Registering device {device_id}...")
                 device = store.register_device(device_id, device_type)
+                print(f"[NEXUS:http] Device registered: {device}")
                 result = {"status": "SUCCESS", "device": device}
+                print(f"[NEXUS:http] Writing response...")
+                print(f"[NEXUS:http] Response sent for /devices/register")
             elif self.path == "/devices/disconnect":
                 device_id = payload.get("device_id")
                 if not device_id:
@@ -75,6 +85,7 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 store = get_device_store()
                 store.unregister_device(device_id)
                 result = {"status": "SUCCESS", "message": f"Device {device_id} disconnected."}
+                print(f"[NEXUS:http] Response sent for /devices/disconnect")
             elif self.path == "/devices/pending":
                 device_id = payload.get("device_id")
                 if not device_id:
@@ -83,6 +94,7 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 store = get_device_store()
                 pending = store.get_pending_messages(device_id)
                 result = {"status": "SUCCESS", "pending": pending, "device_id": device_id}
+                print(f"[NEXUS:http] Response sent for /devices/pending")
             elif self.path == "/message":
                 text = payload.get("text")
                 device_id = payload.get("device_id", "http-client")
@@ -101,6 +113,8 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 }
                 print(f"Nexus event received: {event['type']} from {event['source']}")
                 result = self.server.runtime.submit_event(event, timeout=None)  # NO TIMEOUT
+                print(f"[NEXUS:http] Event processed, status={result.get('status')}")
+                print(f"[NEXUS:http] Response sent for /message")
                 
                 # Check for any pending messages for this device
                 store = get_device_store()
@@ -108,11 +122,17 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 if pending:
                     result["pending_messages"] = pending
             else:
+
                 self._write_json(404, {"status": "ERROR", "message": "Unknown endpoint."})
+
                 return
+
+            self._write_json(200, result)
         except (ValueError, json.JSONDecodeError) as exc:
             self._write_json(400, {"status": "ERROR", "message": str(exc)})
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             self._write_json(500, {"status": "ERROR", "message": str(exc)})
 
     def log_message(self, format: str, *args: Any) -> None:
