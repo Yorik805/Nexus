@@ -85,6 +85,7 @@ class GeminiOrchestrator(Orchestrator):
                 if self.trace:
                     self.trace("provider.request.error", context.event.get("event_id"), provider="gemini", error_code=code, error_type=type(exc).__name__)
                 last_error = (code, str(exc))
+                print(f"[NEXUS:gemini.error] event_id={context.event.get('event_id')} code={code} type={type(exc).__name__} message={exc}")
                 if code in {"AUTHENTICATION_FAILED", "RATE_LIMITED", "RESOURCE_EXHAUSTED", "UNAVAILABLE"}:
                     self.credentials.mark_unavailable(credential)
                 if code == "SCHEMA_VALIDATION_FAILED":
