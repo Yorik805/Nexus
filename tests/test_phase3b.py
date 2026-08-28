@@ -89,7 +89,7 @@ def test_gemini_implements_contract_and_maps_structured_output() -> None:
     assert result.complete is False
     assert [action.action_id for action in result.actions] == ["one", "two"]
     assert result.actions[1].depends_on == ["one"]
-    assert models.calls[0]["model"] == "gemini-3.7-flash"
+    assert models.calls[0]["model"] == "gemini-3.6-flash"
     assert models.calls[0]["config"]["response_mime_type"] == "application/json"
     assert models.calls[0]["config"]["automatic_function_calling"] == {"disable": True}
     assert "tools" not in models.calls[0]["config"]
