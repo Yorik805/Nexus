@@ -80,7 +80,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     if ts:
                         try:
                             dt = time.strptime(ts, "%Y-%m-%dT%H:%M:%S.%f%z")
-                            time_str = time.strftime("%H:%M:%S", dt) + f".{dt.tm_msec:03d}"
+                            ms = ts.split(".")[1].split("+")[0][:3] if "." in ts else "000"
+                            time_str = time.strftime("%H:%M:%S", dt) + f".{ms}"
                         except (ValueError, TypeError):
                             time_str = ts.split("T")[-1].split("+")[0] if "T" in ts else ts
 
@@ -204,7 +205,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def main() -> None:
     print(f"Starting Next.js dashboard on port {NEXTJS_PORT}...")
     nextjs_cmd = [
-        "npx", "next", "start",
+        ("npx.cmd" if sys.platform == "win32" else "npx"), "next", "start",
         "-p", str(NEXTJS_PORT),
         "-H", "127.0.0.1",
     ]
@@ -246,3 +247,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
