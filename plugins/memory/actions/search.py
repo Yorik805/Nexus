@@ -88,7 +88,7 @@ def _search_memories(
     like_pattern = f"%{_escape_like(query)}%"
 
     sql = [
-        "SELECT memory_id, title, category, created_at",
+        "SELECT memory_id, title, category, created_at, tags",
         "FROM memories",
         "WHERE (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')",
     ]

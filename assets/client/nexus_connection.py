@@ -1,4 +1,4 @@
-"""HTTP boundary between a portable client and the Nexus server."""
+﻿"""HTTP boundary between a portable client and the Nexus server."""
 
 from __future__ import annotations
 
@@ -7,6 +7,21 @@ from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from typing import Any
+
+
+def _transcribe_audio(audio_path: str) -> str:
+    """Transcribe audio file to text using faster-whisper if available."""
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("base", device="cpu", compute_type="int8")
+        segments, _ = model.transcribe(audio_path)
+        return " ".join(segment.text for segment in segments).strip()
+    except ImportError:
+        raise RuntimeError(
+            "faster-whisper is not installed. Install it with: pip install faster-whisper"
+        )
+    except Exception as exc:
+        raise RuntimeError(f"STT transcription failed: {exc}")
 
 
 @dataclass
@@ -67,6 +82,9 @@ class NexusConnection:
             raise ConnectionError("Nexus response did not contain response.text.")
         return text
 
+    def receive_pending(self, device_id: str) -> dict[str, Any]:
+        return self._request("POST", "/devices/pending", {"device_id": device_id})
+
     def disconnect(self, device_id: str) -> dict[str, Any]:
         return self._request("POST", "/devices/disconnect", {"device_id": device_id})
 
@@ -77,10 +95,42 @@ if __name__ == "__main__":
     host = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
     device_id = sys.argv[3] if len(sys.argv) > 3 else "laptop_1"
-    text = sys.argv[4] if len(sys.argv) > 4 else "Hello from terminal client"
-
+    
     conn = NexusConnection(host, port)
     print(conn.register(device_id, "laptop"))
+    
+    # Check for pending messages
+    if "--poll" in sys.argv:
+        pending = conn.receive_pending(device_id)
+        print("Pending messages:", pending)
+        sys.exit(0)
+    
+    # Get text from audio or command line
+    text = None
+    if "--audio" in sys.argv:
+        audio_index = sys.argv.index("--audio")
+        if audio_index + 1 < len(sys.argv):
+            audio_path = sys.argv[audio_index + 1]
+            print(f"Transcribing: {audio_path}")
+            text = _transcribe_audio(audio_path)
+            print(f"Transcribed: {text}")
+        else:
+            print("Error: --audio requires a file path")
+            sys.exit(1)
+    elif "--text" in sys.argv:
+        text_index = sys.argv.index("--text")
+        if text_index + 1 < len(sys.argv):
+            text = sys.argv[text_index + 1]
+        else:
+            print("Error: --text requires a message")
+            sys.exit(1)
+    else:
+        text = sys.argv[4] if len(sys.argv) > 4 else "Hello from terminal client"
+    
+    if not text:
+        print("Error: No text to send")
+        sys.exit(1)
+    
     resp = conn.send_user_message(device_id, text)
     print("Response:", conn.receive_response(resp))
 

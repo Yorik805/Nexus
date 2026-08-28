@@ -75,6 +75,14 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 store = get_device_store()
                 store.unregister_device(device_id)
                 result = {"status": "SUCCESS", "message": f"Device {device_id} disconnected."}
+            elif self.path == "/devices/pending":
+                device_id = payload.get("device_id")
+                if not device_id:
+                    self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
+                    return
+                store = get_device_store()
+                pending = store.get_pending_messages(device_id)
+                result = {"status": "SUCCESS", "pending": pending, "device_id": device_id}
             elif self.path == "/message":
                 text = payload.get("text")
                 device_id = payload.get("device_id", "http-client")

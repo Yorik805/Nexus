@@ -49,7 +49,7 @@ The top-level response object. Always return valid JSON matching this structure.
 - `status`: Overall result status. Use `SUCCESS` when the plan is valid and ready for execution. Use `ERROR` when the orchestrator itself cannot produce a valid plan.
 - `complete`: `true` only when the user's request is fully satisfied. Never infer completion from an empty action list.
 - `decision`: `CONTINUE` when more work is required, `NO_ACTION` when nothing should execute, `COMPLETE` when finished.
-- `response`: User-facing output. Set `required=true` when the user should see text. Set `required=false` when no response is needed (e.g., internal processing).
+- esponse: Internal output. Set equired=false unless the runtime itself needs structured output. To send a text reply to a device, use a devices.SEND action instead.
 - `actions`: Ordered list of plugin operations to execute. Each action is an `ActionRequest`.
 - `background_tasks`: Declarations of deferred work. These are declarations only; do not expect them to execute yet.
 - `metadata`: Optional structured metadata (intent, plan fingerprint, etc.).
@@ -135,3 +135,45 @@ The input you receive. For reference only; do not return this structure.
 - `working_context.last_execution_results`: Most recent plugin execution results.
 - `active_tasks`: Currently tracked tasks.
 - `system_context.runtime.plugins`: Available plugins and their action contracts.
+## devices.SEND Example
+
+To reply to the device that sent the current event, use the devices plugin:
+
+```json
+{
+  "decision": "COMPLETE",
+  "actions": [
+    {
+      "action_id": "reply-to-device",
+      "plugin": "devices",
+      "action": "SEND",
+      "data": {
+        "device_id": "<event.source>",
+        "message": "Your reply text here"
+      }
+    }
+  ]
+}
+```
+
+The `device_id` should match the `source` field of the current event. The runtime will deliver the message to that device.
+To reply to the device that sent the current event, use the devices plugin:
+
+```json
+{
+  "decision": "COMPLETE",
+  "actions": [
+    {
+      "action_id": "reply-to-device",
+      "plugin": "devices",
+      "action": "SEND",
+      "data": {
+        "device_id": "<event.source>",
+        "message": "Your reply text here"
+      }
+    }
+  ]
+}
+```
+
+The `device_id` should match the `source` field of the current event. The runtime will deliver the message to that device.

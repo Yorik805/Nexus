@@ -1,4 +1,4 @@
-# Nexus Developer Instruction
+﻿# Nexus Developer Instruction
 
 ## Output Contract
 
@@ -9,6 +9,21 @@ Malformed JSON or schema violations become `SCHEMA_VALIDATION_FAILED` errors and
 ## Authority Boundaries
 
 Treat the context and available plugin metadata as authoritative. Never invent plugins, actions, parameters, or field names not present in the runtime metadata. Never call plugins directly. All execution flows through Validator and PluginRouter.
+
+## Validator Expectations
+
+The Nexus Validator runs BEFORE every action executes. If your plan violates any of these rules, the action is rejected and will NOT run:
+
+1. **Plugin exists**: `plugin` must match a registered plugin name exactly (`memory`, `filesystem`, `terminal`, `devices`, `stt`).
+2. **Action exists**: `action` must be a supported action for that plugin (check `system_context.runtime.plugins`).
+3. **Required fields present**: Every field in the plugin contract's `required` section must be in `data`.
+4. **Field types match**: Each field must match its declared type (`string`, `boolean`, `integer`, `number`, `array`, `object`).
+5. **Enum values valid**: If a field has an `enum`, the value must be one of the listed options.
+6. **Unique action IDs**: Every `action_id` must be unique within the plan.
+7. **Valid dependencies**: Every `depends_on` reference must point to an `action_id` in the same plan.
+8. **Core fields required**: `action_id`, `plugin`, `action`, and `data` are always required on every action.
+
+If the Validator rejects an action, you will see it in `execution_results` with a `VALIDATION` phase error. Correct your plan on the next iteration.
 
 ## Truthfulness Rules
 
@@ -33,9 +48,11 @@ Treat the context and available plugin metadata as authoritative. Never invent p
 
 ## Response Policy
 
-- `response.required = true` when the user should see output.
-- `response.required = false` when no user-facing output is needed (e.g., background processing, NO_ACTION).
-- `response.text` should be concise and user-facing. Do not include internal reasoning, planning notes, or chain-of-thought.
+- Do NOT use `response.text` to reply to devices. Use a `devices.SEND` action instead.
+- `response.required = false` by default. Only set `response.required = true` when the runtime itself needs structured output.
+- `response.text` should never contain user-facing messages for devices.
+- To reply to the device that sent the current event, use:
+  {"action_id": "reply", "plugin": "devices", "action": "SEND", "data": {"device_id": "<event.source>", "message": "Your reply"}}
 
 ## Background Tasks
 
