@@ -21,6 +21,18 @@ LOG_PATH = Path(__file__).parent / "logs" / "nexus_runtime.log"
 NEXUS_RUNTIME_URL = os.getenv("NEXUS_RUNTIME_URL", "http://127.0.0.1:8765")
 
 
+def _format_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return str(value).lower()
+    if value is None:
+        return "none"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str, sort_keys=True)
+    return str(value)
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/state"):
@@ -56,97 +68,61 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _handle_state(self):
         try:
             events = []
+            terminal_lines = []
             iteration = 0
             active_actions = 0
-            provider = {"name": "\u2014", "model": "\u2014", "status": "OFFLINE", "latency": "\u2014"}
+            provider = {"name": "â€”", "model": "â€”", "status": "OFFLINE", "latency": "â€”"}
             uptime = "00:00:00:00"
             progress = 0
 
             if LOG_PATH.exists():
-                lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
-                for line in lines:
+                raw_lines = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+                for line in raw_lines:
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         entry = json.loads(line)
                     except json.JSONDecodeError:
+                        terminal_lines.append(line)
                         continue
 
                     step = entry.get("step", "")
                     details = entry.get("details", {})
                     ts = entry.get("timestamp", "")
-                    time_str = ""
-                    if ts:
-                        try:
-                            dt = time.strptime(ts, "%Y-%m-%dT%H:%M:%S.%f%z")
-                            ms = ts.split(".")[1].split("+")[0][:3] if "." in ts else "000"
-                            time_str = time.strftime("%H:%M:%S", dt) + f".{ms}"
-                        except (ValueError, TypeError):
-                            time_str = ts.split("T")[-1].split("+")[0] if "T" in ts else ts
+                    event_id = entry.get("event_id")
 
-                    kind = "SYSTEM"
-                    source = str(details.get("source", "runtime"))
-                    message = ""
-                    response = None
+                    events.append({
+                        "timestamp": ts,
+                        "step": step,
+                        "event_id": event_id,
+                        "details": details,
+                    })
 
-                    if step == "event.received":
-                        kind = "USER_MESSAGE"
-                        message = f"{details.get('event_type', 'EVENT')} from {source}"
-                    elif step == "iteration.start":
+                    kv_pairs = " ".join(f"{k}={_format_value(v)}" for k, v in details.items())
+                    terminal_line = f"[{ts}] {step} {kv_pairs}".strip()
+                    terminal_lines.append(terminal_line)
+
+                    if step == "iteration.start":
                         iteration = details.get("iteration", iteration)
-                        message = f"Iteration #{iteration} started"
-                    elif step == "context_builder.start" or step == "context_builder.complete":
-                        message = f"ContextBuilder {details.get('event_type', '')} \u2014 {details.get('memory_status', '')}"
-                    elif step == "provider.request.start":
+                    if step == "orchestrator.decision":
+                        active_actions = details.get("action_count", 0)
+                    if step == "provider.request.start":
                         provider["name"] = details.get("provider", provider["name"])
                         provider["model"] = details.get("model", provider["model"])
                         provider["status"] = "READY"
-                        message = f"{provider['name']} request started \u00b7 {provider['model']}"
-                    elif step == "provider.response.received":
-                        text_len = details.get("text_length", 0)
-                        message = f"{provider['name']} response received \u00b7 {text_len} chars"
-                        response_text = details.get("response_text", "")
-                        response = {
-                            "model": provider["model"],
-                            "status": 200,
-                            "latency": provider.get("latency", "\u2014"),
-                            "tokens": str(text_len),
-                            "detail": response_text or f"Response received ({text_len} chars). Click to inspect.",
-                        }
-                    elif step == "provider.request.error":
-                        err_code = details.get("error_code", "ERROR")
-                        message = f"{provider['name']} error: {err_code}"
-                        kind = "ERROR"
-                        provider["status"] = err_code.upper()
-                    elif step == "orchestrator.decision":
-                        active_actions = details.get("action_count", 0)
-                        decision = details.get("decision", "CONTINUE")
-                        message = f"Decision: {decision} \u00b7 {active_actions} actions"
-                    elif step == "validator.complete":
-                        approved = details.get("approved_count", 0)
-                        message = f"Validator: {approved} actions approved"
-                    elif step == "plugin.execution":
-                        action = details.get("action", "?")
-                        plugin = details.get("plugin", "?")
-                        status = details.get("status", "?")
-                        kind = "EXECUTION_RESULT"
-                        message = f"{plugin}.{action} \u00b7 {status}"
-                    elif step == "cycle.complete":
-                        message = f"Cycle complete: {details.get('status', '')} / {details.get('termination_reason', '')}"
-                    elif step == "event.complete":
-                        message = f"Event complete: {details.get('status', '')} / {details.get('termination_reason', '')}"
-                    elif step == "provider.request_start":
-                        pass
+                    if step == "provider.request.error":
+                        provider["status"] = str(details.get("error_code", "ERROR")).upper()
+                    if step == "provider.response.received":
+                        provider["status"] = "READY"
 
-                    if message:
-                        events.append({"time": time_str or ts, "kind": kind, "source": source, "message": message, "response": response})
-
-            events = events[-50:]
-            progress = min(92, max(0, 46 + active_actions * 11))
+                events = events[-100:]
+                terminal_lines = terminal_lines[-100:]
+                progress = min(92, max(0, 46 + active_actions * 11))
 
             payload = {
                 "events": events,
+                "terminal_output": "\n".join(terminal_lines),
                 "iteration": iteration,
                 "activeActions": active_actions,
                 "provider": provider,
@@ -154,7 +130,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "progress": progress,
             }
         except Exception as exc:
-            payload = {"events": [], "iteration": 0, "activeActions": 0, "provider": {"name": "ERROR", "model": "\u2014", "status": "ERROR"}, "uptime": "00:00:00:00", "progress": 0, "error": str(exc)}
+            payload = {
+                "events": [],
+                "terminal_output": f"[ERROR] Failed to read state: {exc}",
+                "iteration": 0,
+                "activeActions": 0,
+                "provider": {"name": "ERROR", "model": "â€”", "status": "ERROR"},
+                "uptime": "00:00:00:00",
+                "progress": 0,
+                "error": str(exc),
+            }
 
         body = json.dumps(payload, default=str).encode("utf-8")
         self.send_response(200)
@@ -248,5 +233,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

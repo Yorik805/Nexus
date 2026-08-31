@@ -89,10 +89,12 @@ class GeminiOrchestrator(Orchestrator):
                 print(f"[NEXUS:gemini.error] event_id={context.event.get('event_id')} code={code} type={type(exc).__name__} message={exc}")
                 if code in {"AUTHENTICATION_FAILED", "RATE_LIMITED", "RESOURCE_EXHAUSTED", "UNAVAILABLE"}:
                     self.credentials.mark_unavailable(credential)
-                if code == "SCHEMA_VALIDATION_FAILED":
+                if code in {"PROVIDER_ERROR", "SCHEMA_VALIDATION_FAILED"}:
                     break
-                if attempt + 1 < max_attempts:
+                if code in {"AUTHENTICATION_FAILED", "RATE_LIMITED", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "TIMEOUT"} and attempt + 1 < max_attempts:
                     time.sleep(self.config.retry_backoff_seconds * (2 ** attempt))
+                else:
+                    break
                 print(f"[NEXUS:gemini.retry] event_id={context.event.get('event_id')} attempt={attempt + 1}/{max_attempts} error={code} model={self.config.model}")
             attempt += 1
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from orchestrators import ActionRequest
@@ -11,9 +10,8 @@ from .observability import RuntimeTrace
 class PluginRouter:
     """Executes approved plugin actions in declared sequential order."""
 
-    def __init__(self, registry: PluginRegistry, timeout_seconds: float = 30.0) -> None:
+    def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
-        self.timeout_seconds = timeout_seconds
 
     def execute(
         self,
@@ -51,15 +49,10 @@ class PluginRouter:
                     results.append({**base, "status": "ERROR", "result": {}, "message": f"Plugin is not registered: {action.plugin}"})
                     continue
                 try:
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(plugin.entry_point, {"action": action.action.upper(), "data": action.data})
-                        try:
-                            response = future.result(timeout=self.timeout_seconds)
-                            if not isinstance(response, dict) or response.get("status") not in {"SUCCESS", "ERROR"} or not isinstance(response.get("data", {}), dict):
-                                response = {"status": "ERROR", "data": {}, "message": "Plugin returned a malformed response."}
-                            execution = {**base, "status": response["status"], "result": response.get("data", {}), "message": response.get("message", "")}
-                        except FuturesTimeoutError:
-                            execution = {**base, "status": "ERROR", "result": {}, "message": f"Plugin execution timed out after {self.timeout_seconds}s"}
+                    response = plugin.entry_point({"action": action.action.upper(), "data": action.data})
+                    if not isinstance(response, dict) or response.get("status") not in {"SUCCESS", "ERROR"} or not isinstance(response.get("data", {}), dict):
+                        response = {"status": "ERROR", "data": {}, "message": "Plugin returned a malformed response."}
+                    execution = {**base, "status": response["status"], "result": response.get("data", {}), "message": response.get("message", "")}
                 except Exception as exc:
                     execution = {**base, "status": "ERROR", "result": {}, "message": f"Plugin execution failed: {exc}"}
                 results.append(execution)

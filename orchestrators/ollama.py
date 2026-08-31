@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import time
+import traceback
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -61,9 +62,11 @@ class OllamaOrchestrator(Orchestrator):
             except Exception as exc:
                 code = self._classify_error(exc)
                 if self.trace:
-                    self.trace("provider.request.error", event_id, provider="ollama", error_code=code, error_type=type(exc).__name__)
+                    self.trace("provider.request.error", event_id, provider="ollama", function="OllamaOrchestrator.process", error_code=code, error_type=type(exc).__name__, error_message=str(exc), error_traceback=traceback.format_exc())
                 last_error = (code, str(exc))
                 if code in {"UNAVAILABLE", "SERVER_ERROR", "TIMEOUT"} and _attempt + 1 < attempts:
+                    if self.trace:
+                        self.trace("provider.request.retry", event_id, provider="ollama", function="OllamaOrchestrator.process", attempt=_attempt + 1, max_attempts=attempts, error_code=code, model=self.config.model)
                     time.sleep(self.config.retry_backoff_seconds * (2 ** _attempt))
                 else:
                     break
@@ -74,7 +77,7 @@ class OllamaOrchestrator(Orchestrator):
             complete=True,
             response=ResponseRequest(required=False, text=""),
             metadata={"error_code": code},
-            error={"code": code, "message": message[:300]},
+            error={"code": code, "message": message},
         )
 
     def _chat(self, request: OrchestratorRequest) -> dict[str, Any]:

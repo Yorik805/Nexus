@@ -383,7 +383,7 @@ class NexusRuntime:
         cycle = OrchestrationCycle(
             self.orchestrator,
             ExecutionPlanValidator(self.registry),
-            PluginRouter(self.registry),
+            PluginRouter(self.registry, timeout_seconds=float(os.getenv("NEXUS_PLUGIN_TIMEOUT_SECONDS", "30.0"))),
             self.cycle_config,
             context_builder=self.context_builder.build if self.context_builder is not None else None,
             trace=self.trace,
