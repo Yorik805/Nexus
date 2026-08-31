@@ -120,11 +120,54 @@ class GeminiOrchestrator(Orchestrator):
     @staticmethod
     def _response_schema(runtime_info: dict[str, Any] | None = None) -> dict[str, Any]:
         contracts = runtime_info.get("plugins", {}) if isinstance(runtime_info, dict) else {}
-        data_properties: dict[str, Any] = {}
-        for plugin in contracts.values() if isinstance(contracts, dict) else []:
-            for contract in plugin.get("contracts", {}).values() if isinstance(plugin, dict) else []:
-                for name, field_schema in {**contract.get("required", {}), **contract.get("optional", {})}.items():
-                    data_properties.setdefault(name, field_schema)
+
+        action_schemas: list[dict[str, Any]] = []
+        for plugin_name, plugin in (contracts.items() if isinstance(contracts, dict) else []):
+            if not isinstance(plugin, dict):
+                continue
+            for action_name, contract in (plugin.get("contracts", {}).items() if isinstance(plugin, dict) else []):
+                if not isinstance(contract, dict):
+                    continue
+                required_fields = contract.get("required", {})
+                optional_fields = contract.get("optional", {})
+                all_fields = {**required_fields, **optional_fields}
+                if not all_fields:
+                    continue
+                data_props: dict[str, Any] = {}
+                for field_name, field_schema in all_fields.items():
+                    data_props[field_name] = field_schema
+                required_keys = list(required_fields.keys())
+
+                action_schemas.append({
+                    "type": "object",
+                    "properties": {
+                        "action_id": {"type": "string"},
+                        "plugin": {"type": "string", "const": plugin_name},
+                        "action": {"type": "string", "const": action_name},
+                        "data": {
+                            "type": "object",
+                            "properties": data_props,
+                            "required": required_keys,
+                            "additionalProperties": False,
+                        },
+                        "depends_on": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["action_id", "plugin", "action", "data"],
+                })
+
+        if not action_schemas:
+            action_schemas = [{
+                "type": "object",
+                "properties": {
+                    "action_id": {"type": "string"},
+                    "plugin": {"type": "string"},
+                    "action": {"type": "string"},
+                    "data": {"type": "object"},
+                    "depends_on": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["action_id", "plugin", "action", "data"],
+            }]
+
         return {
             "type": "object",
             "properties": {
@@ -143,19 +186,7 @@ class GeminiOrchestrator(Orchestrator):
                 "actions": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "action_id": {"type": "string"},
-                            "plugin": {"type": "string"},
-                            "action": {"type": "string"},
-                            "data": {
-                                "type": "object",
-                                "properties": data_properties,
-                                "description": "Use the required and optional fields from the supplied plugin action contract.",
-                            },
-                            "depends_on": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["action_id", "plugin", "action", "data"],
+                        "anyOf": action_schemas,
                     },
                 },
                 "background_tasks": {"type": "array", "items": {"type": "object"}},
