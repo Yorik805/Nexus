@@ -71,20 +71,13 @@ class NexusConnection:
         return result
 
     def receive_response(self, response: dict[str, Any]) -> str:
-        # Prefer the response for the message just sent.
+        # Extract the orchestrator response.text (the actual AI reply)
         nested = response.get("response")
         if isinstance(nested, dict):
-            response = nested
-        text = response.get("text")
-        if isinstance(text, str) and text.strip():
-            return text
-
-        # Fall back to queued device messages only when no direct response exists.
-        pending = response.get("pending_messages", [])
-        messages = [msg.get("message", str(msg)) if isinstance(msg, dict) else str(msg) for msg in pending]
-        if messages:
-            return "\n".join(messages)
-        raise ConnectionError("Nexus response did not contain response.text.")
+            text = nested.get("text")
+            if isinstance(text, str) and text.strip():
+                return text
+        raise ConnectionError("Nexus response did not contain response.text. Orchestrator may not have sent a reply.")
 
     def receive_pending(self, device_id: str) -> dict[str, Any]:
         return self._request("POST", "/devices/pending", {"device_id": device_id})
