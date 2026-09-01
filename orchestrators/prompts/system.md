@@ -137,8 +137,8 @@ Fields marked (optional) may be omitted. All other fields are required.
 
 ### memory plugin
 
-- **WRITE** — Store a memory.
-  - `data`: `{"title": string, "category": "PROJECT"|"PERSON"|"IDEA"|"PREFERENCE", "content": string, "tags": string[] (optional)}`
+- **WRITE** — Store a memory. ALWAYS include meaningful tags (e.g., ["topic", "category", "type"]). Tags enable later retrieval and categorization.
+  - `data`: `{"title": string, "category": "PROJECT"|"PERSON"|"IDEA"|"PREFERENCE", "content": string, "tags": string[] (required)}`
 - **SEARCH** — Search relevant stored memories.
   - `data`: `{"type": "SQLITE"|"VECTOR", "query": string, "category": string (optional), "tags": string[] (optional), "limit": integer (optional), "include_deleted": boolean (optional)}`
 - **UPDATE** — Update an existing memory.

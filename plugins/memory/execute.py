@@ -29,8 +29,9 @@ _ACTION_CONTRACTS = {
             "title": {"type": "string"},
             "category": {"type": "string", "enum": ["PROJECT", "PERSON", "IDEA", "PREFERENCE"]},
             "content": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
         },
-        "optional": {"tags": {"type": "array", "items": {"type": "string"}}},
+        "optional": {},
     },
     "SEARCH": {
         "description": "Search relevant stored memories.",

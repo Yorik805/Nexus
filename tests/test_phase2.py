@@ -34,8 +34,8 @@ def test_registry_discovers_existing_plugin_actions() -> None:
     assert "type" in search_contract["required"]
     assert search_contract["required"]["type"]["enum"] == ["SQLITE", "VECTOR"]
     write_contract = registry.metadata()["memory"]["contracts"]["WRITE"]
-    assert {"title", "category", "content"}.issubset(write_contract["required"])
-    assert "tags" in write_contract.get("optional", {})
+    assert {"title", "category", "content", "tags"}.issubset(write_contract["required"])
+    assert "tags" not in write_contract.get("optional", {})
 
 
 def test_validator_enforces_action_contract_fields_and_enums() -> None:
