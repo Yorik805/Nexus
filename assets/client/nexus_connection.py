@@ -71,28 +71,20 @@ class NexusConnection:
         return result
 
     def receive_response(self, response: dict[str, Any]) -> str:
-        # Check for pending messages from devices.SEND
-        pending = response.get("pending_messages", [])
-        if pending:
-            messages = []
-            for msg in pending:
-                if isinstance(msg, dict):
-                    messages.append(msg.get("message", str(msg)))
-                else:
-                    messages.append(str(msg))
-            # Return pending messages joined with newlines
-            text = "\n".join(messages)
-            if text.strip():
-                return text
-        
-        # Fallback to response.text
+        # Prefer the response for the message just sent.
         nested = response.get("response")
         if isinstance(nested, dict):
             response = nested
         text = response.get("text")
-        if not isinstance(text, str):
-            raise ConnectionError("Nexus response did not contain response.text.")
-        return text
+        if isinstance(text, str) and text.strip():
+            return text
+
+        # Fall back to queued device messages only when no direct response exists.
+        pending = response.get("pending_messages", [])
+        messages = [msg.get("message", str(msg)) if isinstance(msg, dict) else str(msg) for msg in pending]
+        if messages:
+            return "\n".join(messages)
+        raise ConnectionError("Nexus response did not contain response.text.")
 
     def receive_pending(self, device_id: str) -> dict[str, Any]:
         return self._request("POST", "/devices/pending", {"device_id": device_id})
@@ -173,24 +165,29 @@ if __name__ == "__main__":
             print("Error: --text requires a message")
             sys.exit(1)
     else:
-        # No args: auto-run STT
-        text = _get_text_via_stt()
+        print(f"Connected to Nexus at {conn.base_url}. Type messages; use /quit to exit.")
+        try:
+            while True:
+                text = input("You> ").strip()
+                if text.lower() in {"/quit", "/exit"}:
+                    break
+                if not text:
+                    continue
+                response = conn.send_user_message(device_id, text)
+                print(f"Nexus> {conn.receive_response(response)}")
+        except (EOFError, KeyboardInterrupt):
+            print()
+        finally:
+            conn.disconnect(device_id)
+        sys.exit(0)
 
     if not text:
         print("Error: No text to send")
         sys.exit(1)
 
     resp = conn.send_user_message(device_id, text)
-    pending = resp.get("pending_messages", [])
-    if pending:
-        print("Pending replies:")
-        for msg in pending:
-            if isinstance(msg, dict):
-                print(f"  - {msg.get('message', msg)}")
-            else:
-                print(f"  - {msg}")
-    else:
-        print("Response:", conn.receive_response(resp))
+    print("Response:", conn.receive_response(resp))
+    conn.disconnect(device_id)
 class MockNexusConnection:
     """Offline transport for client tests and microphone/TTS demos."""
 

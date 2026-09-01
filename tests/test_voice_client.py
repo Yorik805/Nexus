@@ -61,6 +61,12 @@ def test_mock_connection_is_available_without_server() -> None:
     assert connection.receive_response(response) == "Mock Nexus response to: test"
 
 
+def test_direct_response_is_preferred_over_stale_pending_messages() -> None:
+    connection = NexusConnection("127.0.0.1", 8765)
+    response = {"response": {"text": "Fresh reply"}, "pending_messages": [{"message": "Old reply"}]}
+    assert connection.receive_response(response) == "Fresh reply"
+
+
 def test_connection_reaches_nexus_runtime_gateway() -> None:
     runtime = NexusRuntime(orchestrator=DummyOrchestrator())
     runtime.start()

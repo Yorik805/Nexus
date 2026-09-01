@@ -92,7 +92,7 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                     self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
                     return
                 store = get_device_store()
-                pending = store.get_pending_messages(device_id)
+                pending = store.get_pending_messages(device_id, consume=True)
                 result = {"status": "SUCCESS", "pending": pending, "device_id": device_id}
                 print(f"[NEXUS:http] Response sent for /devices/pending")
             elif self.path == "/message":

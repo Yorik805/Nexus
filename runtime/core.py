@@ -68,9 +68,12 @@ class DeviceStore:
                 device["last_seen"] = utc_now_iso()
         return message_id
     
-    def get_pending_messages(self, device_id: str) -> list[dict[str, Any]]:
+    def get_pending_messages(self, device_id: str, consume: bool = False) -> list[dict[str, Any]]:
         with self._lock:
-            return list(self._pending.get(device_id, []))
+            messages = list(self._pending.get(device_id, []))
+            if consume:
+                self._pending[device_id] = []
+            return messages
     
     def get_all_pending_messages(self) -> dict[str, list[dict[str, Any]]]:
         with self._lock:
