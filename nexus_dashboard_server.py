@@ -79,6 +79,64 @@ def _read_terminal_lines(limit: int = 200) -> list[str]:
     return lines[-limit:]
 
 
+def _read_runtime_entries(limit: int = 200) -> list[dict[str, Any]]:
+    if not LOG_PATH.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    for line in LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def _build_dashboard_state() -> dict[str, Any]:
+    entries = _read_runtime_entries()
+    events: list[dict[str, Any]] = []
+    provider = {"name": "-", "model": "-", "status": "OFFLINE"}
+    iteration = 0
+    active_actions = 0
+    progress = 0
+    for entry in entries:
+        step = str(entry.get("step", ""))
+        details = entry.get("details", {}) if isinstance(entry.get("details", {}), dict) else {}
+        timestamp = str(entry.get("timestamp", ""))
+        time_text = timestamp[11:19] if len(timestamp) >= 19 else timestamp
+        if step == "iteration.start":
+            iteration = int(details.get("iteration", iteration) or iteration)
+        if step == "orchestrator.decision":
+            active_actions = int(details.get("action_count", 0) or 0)
+            progress = 100 if details.get("complete") else min(95, max(0, active_actions * 20))
+        if step == "provider.request.start":
+            provider = {"name": str(details.get("provider", "-")), "model": str(details.get("model", "-")), "status": "ONLINE"}
+        if step == "provider.request.error":
+            provider["status"] = "ERROR"
+        if step in {"event.received", "provider.response.parsed", "provider.request.error", "plugin.execution", "event.complete"}:
+            if step == "event.received":
+                kind, source, message = "USER_MESSAGE", str(details.get("source", "runtime")), "Event received"
+            elif step == "provider.request.error":
+                kind, source, message = "ERROR", str(details.get("provider", "provider")), str(details.get("error_code", "Provider error"))
+            elif step == "plugin.execution":
+                kind, source, message = "EXECUTION_RESULT", str(details.get("plugin", "plugin")), f"{details.get('action', 'action')} {details.get('status', '')}".strip()
+            elif step == "provider.response.parsed":
+                kind, source, message = "SYSTEM", str(details.get("provider", "provider")), "Structured response parsed"
+            else:
+                kind, source, message = "SYSTEM", "runtime", str(details.get("status", "Event complete"))
+            events.append({"time": time_text, "kind": kind, "source": source, "message": message})
+    return {
+        "events": events[-100:],
+        "terminal_output": "\n".join(_read_terminal_lines(200)),
+        "iteration": iteration,
+        "activeActions": active_actions,
+        "provider": provider,
+        "uptime": "LIVE",
+        "progress": progress,
+    }
+
+
 HTML_PAGE = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -215,10 +273,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _handle_state(self) -> None:
         try:
-            terminal_lines = _read_terminal_lines(200)
-            payload = {
-                "terminal_output": "\n".join(terminal_lines),
-            }
+            payload = _build_dashboard_state()
         except Exception as exc:
             payload = {
                 "terminal_output": f"[ERROR] Failed to read state: {exc}",
