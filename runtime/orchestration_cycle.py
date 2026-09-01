@@ -48,10 +48,16 @@ class OrchestrationCycle:
         if self.config.recent_history_limit < 1 or self.config.emergency_iteration_limit < 1:
             raise ValueError("history and emergency limits must be at least 1.")
 
-    def run(self, initial_context: OrchestratorContext) -> dict[str, Any]:
+    def run(
+        self,
+        initial_context: OrchestratorContext,
+        initial_history: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         working_context = dict(initial_context.working_context)
-        history: list[dict[str, Any]] = []
+        history: list[dict[str, Any]] = list(initial_history or [])
         history_manager = ContextHistoryManager(self.config.recent_history_limit)
+        history_manager.extend(history)
+        history = history_manager.records()
         last_fingerprint: str | None = None
         repeated_plans = 0
         final_response: dict[str, Any] = {"required": False, "text": ""}
@@ -128,6 +134,7 @@ class OrchestrationCycle:
                 elif action_id and item.get("status") == "SUCCESS":
                     failed_action_ids.discard(action_id)
             history_entry = {
+                "event": initial_context.event,
                 "iteration": iteration,
                 "orchestrator_result": orchestrator_result.to_dict(),
                 "validation_result": validation.to_dict(),
@@ -157,9 +164,14 @@ class OrchestrationCycle:
             if decision == "COMPLETE":
                 termination_reason = "COMPLETED"
                 if failed_action_ids or validation.errors:
-                    final_response = {"required": True, "text": "The requested actions have not completed successfully.", "metadata": {}}
-                    status = "ERROR"
-                    termination_reason = "EXECUTION_FAILED"
+                    candidate_text = final_response.get("text", "") if isinstance(final_response, dict) else ""
+                    if isinstance(candidate_text, str) and candidate_text.strip():
+                        status = "ERROR" if not had_validation_errors else "PARTIAL_SUCCESS"
+                        termination_reason = "EXECUTION_FAILED" if failed_action_ids else termination_reason
+                    else:
+                        final_response = {"required": True, "text": "The requested actions have not completed successfully.", "metadata": {}}
+                        status = "ERROR"
+                        termination_reason = "EXECUTION_FAILED"
                 else:
                     status = "SUCCESS" if not had_validation_errors else "PARTIAL_SUCCESS"
                 break

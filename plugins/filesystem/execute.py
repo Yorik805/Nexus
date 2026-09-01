@@ -40,10 +40,16 @@ _ACTION_CONTRACTS = {
 }
 _ACTION_CONTRACTS["WRITE"]["required"] = {"path": {"type": "string"}, "content": {"type": "string"}}
 _ACTION_CONTRACTS["APPEND"]["required"] = {"path": {"type": "string"}, "content": {"type": "string"}}
+for action in ("READ", "WRITE", "APPEND"):
+    _ACTION_CONTRACTS[action]["optional"] = {"encoding": {"type": "string"}}
+_ACTION_CONTRACTS["DELETE"]["optional"] = {"recursive": {"type": "boolean"}}
 _ACTION_CONTRACTS["COPY"] = {"required": {"source": {"type": "string"}, "destination": {"type": "string"}}}
-_ACTION_CONTRACTS["MOVE"] = _ACTION_CONTRACTS["COPY"]
+_ACTION_CONTRACTS["COPY"]["optional"] = {"recursive": {"type": "boolean"}}
+_ACTION_CONTRACTS["MOVE"] = {"required": {"source": {"type": "string"}, "destination": {"type": "string"}}}
 _ACTION_CONTRACTS["RENAME"] = {"required": {"path": {"type": "string"}, "new_name": {"type": "string"}}}
 _ACTION_CONTRACTS["MKDIR"] = {"required": {"path": {"type": "string"}}}
+_ACTION_CONTRACTS["MKDIR"]["optional"] = {"parents": {"type": "boolean"}}
+_ACTION_CONTRACTS["LIST"]["optional"] = {"include_hidden": {"type": "boolean"}}
 _ACTION_CONTRACTS["SEARCH"] = {
     "description": "Search for files matching a pattern.",
     "required": {"path": {"type": "string"}},

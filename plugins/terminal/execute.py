@@ -38,7 +38,16 @@ _ACTION_CONTRACTS = {
     "STATUS": {"description": "Get terminal process status.", "required": {"process_id": {"type": "string"}}},
     "STOP": {"description": "Stop a terminal process.", "required": {"process_id": {"type": "string"}}},
     "LIST": {"description": "List terminal processes."},
-    "UPDATE": {"description": "Update a terminal process.", "required": {"process_id": {"type": "string"}}},
+    "UPDATE": {
+        "description": "Update a terminal process.",
+        "required": {"process_id": {"type": "string"}},
+        "optional": {
+            "update_interval": {"type": "integer"},
+            "conversation_updates": {"type": "boolean"},
+            "continue_flag": {"type": "boolean"},
+            "metadata": {"type": "object"},
+        },
+    },
     "CLEANUP": {"description": "Clean up terminal processes.", "optional": {"older_than_seconds": {"type": "number"}}},
 }
 

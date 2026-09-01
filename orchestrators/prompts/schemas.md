@@ -161,3 +161,79 @@ To reply to the device that sent the current event, use the devices plugin. Repl
 ```
 
 The runtime will deliver this message to the device. Do NOT put user-facing text in `response.text` expecting the client to receive it directly.
+
+## Capability Selection
+
+Before returning actions, inspect `system_context.runtime.plugins`. This live registry is authoritative for the plugins, actions, and `required`/`optional` fields available in the current runtime. Use it as capability information, not only as validation information. Never invent a plugin, action, parameter, scheduler, persistent task manager, or delivery mechanism that is not present there.
+
+The default registered plugins are `memory`, `filesystem`, `terminal`, and `devices`. An implementation is unavailable to the orchestrator unless it appears in the live registry.
+
+For short work, use the appropriate immediate action. For long-running work, inspect `terminal.EXECUTE`: when `dynamic` is available, set it to `true` so execution returns a `process_id` without waiting for completion. Then use that identifier with `terminal.STATUS` to inspect lifecycle and output, `terminal.STOP` to stop it, `terminal.LIST` to find retained processes, or `terminal.CLEANUP` to remove finished records. A started process is not a completed process. The current runtime keeps terminal process records in memory only.
+
+If a foreground action fails, read its execution result, determine the cause, check live capabilities for an alternative, and retry only with a corrected plan. Do not repeat the same failing command blindly or claim success without a confirmed successful result. `background_tasks` are declarations only in the current runtime; they are not executed by the orchestration cycle.
+
+## Actual Action Examples
+
+### Immediate device reply
+
+```json
+{
+  "action_id": "reply",
+  "plugin": "devices",
+  "action": "SEND",
+  "data": {"device_id": "<event.source>", "message": "The request is complete."}
+}
+```
+
+### Immediate terminal task
+
+```json
+{
+  "action_id": "read-time",
+  "plugin": "terminal",
+  "action": "EXECUTE",
+  "data": {"command": "Get-Date", "timeout": 10}
+}
+```
+
+### Long-running terminal task
+
+```json
+{
+  "action_id": "start-monitor",
+  "plugin": "terminal",
+  "action": "EXECUTE",
+  "data": {
+    "command": "python monitor.py",
+    "dynamic": true,
+    "conversation_updates": true,
+    "update_interval": 1000
+  }
+}
+```
+
+Use the returned `data.process_id` in later actions:
+
+```json
+{
+  "action_id": "inspect-monitor",
+  "plugin": "terminal",
+  "action": "STATUS",
+  "data": {"process_id": "<process_id from execution result>"}
+}
+```
+
+```json
+{
+  "action_id": "stop-monitor",
+  "plugin": "terminal",
+  "action": "STOP",
+  "data": {"process_id": "<process_id from execution result>"}
+}
+```
+
+`STATUS` returns the process record, including status and accumulated output. Use `LIST` with `{}` to enumerate retained process records and `CLEANUP` with `{}` or `{"older_than_seconds": 3600}` to remove finished records.
+
+### Foreground failure recovery
+
+If a foreground terminal action fails due to duration, do not repeat it unchanged. If the live `EXECUTE` contract exposes `dynamic`, issue a corrected `EXECUTE` action with `dynamic: true`, preserve its returned `process_id`, and report only the lifecycle state confirmed by subsequent `STATUS` results.

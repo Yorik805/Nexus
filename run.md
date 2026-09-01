@@ -1,21 +1,28 @@
 # Nexus Quick Start
 
-## 1. Start the Runtime
+Use [START_NEXUS.md](START_NEXUS.md) for the complete startup sequence.
+
+The essential dashboard commands are:
 
 ```powershell
+# Terminal 1: Nexus HTTP + realtime gateways
 cd E:\Nexus
-python main.py
+python nexus_server.py --host 127.0.0.1 --port 8765
+
+# Terminal 2: dashboard backend
+cd E:\Nexus
+$env:NEXUS_DASHBOARD_PORT = "11882"
+$env:NEXUS_RUNTIME_URL = "http://127.0.0.1:8765"
+python .\nexus_dashboard_server.py
+
+# Terminal 3: Next.js dashboard
+cd E:\Nexus\nexus-runtime-dashboard
+$env:NEXUS_DASHBOARD_BACKEND_URL = "http://127.0.0.1:11882"
+npm run dev
 ```
 
-## 2. Start the Dashboard Server
-
-```powershell
-cd E:\Nexus
-set NEXUS_DASHBOARD_PORT=11882
-set NEXUS_RUNTIME_URL=http://127.0.0.1:8765
-python nexus_dashboard_server.py
-```
-Open http://0.0.0.0:11882 in your browser.
+Open http://localhost:3000. Do not set `NEXUS_RUNTIME_URL` to `8766`; that port is
+the realtime WebSocket gateway, not the dashboard's HTTP backend.
 
 ## 3. Use the Nexus Client Connection
 

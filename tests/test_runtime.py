@@ -155,3 +155,25 @@ def test_runtime_reads_numeric_context_builder_switch(monkeypatch) -> None:
 
     assert runtime.context_builder_enabled is False
     assert runtime.context_builder is None
+
+
+def test_runtime_preserves_conversation_history_per_source() -> None:
+    received_contexts: list[object] = []
+
+    class RecordingOrchestrator(DummyOrchestrator):
+        def process(self, context):
+            received_contexts.append(context)
+            return super().process(context)
+
+    runtime = NexusRuntime(orchestrator=RecordingOrchestrator())
+    runtime.start()
+    try:
+        runtime.submit_event({"type": "USER_MESSAGE", "source": "device_a", "data": {"text": "set a timer"}})
+        runtime.submit_event({"type": "USER_MESSAGE", "source": "device_a", "data": {"text": "did you set it?"}})
+    finally:
+        runtime.stop()
+
+    second_context = received_contexts[1]
+    history = second_context.working_context["execution_history"]
+    assert history
+    assert history[0]["event"]["data"]["text"] == "set a timer"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import threading
 import uuid
@@ -19,7 +21,7 @@ from .observability import RuntimeTrace
 
 
 class DeviceStore:
-    """In-memory store for connected devices and their pending messages."""
+    """In-memory store for connected devices and their offline fallback queue."""
     
     def __init__(self) -> None:
         self._devices: dict[str, dict[str, Any]] = {}
@@ -53,7 +55,6 @@ class DeviceStore:
             return list(self._devices.values())
     
     def add_pending_message(self, device_id: str, message: str) -> str:
-        import uuid
         message_id = str(uuid.uuid4())
         with self._lock:
             if device_id not in self._pending:
@@ -63,6 +64,18 @@ class DeviceStore:
                 "message": message,
                 "timestamp": utc_now_iso(),
             })
+            device = self._devices.get(device_id)
+            if device:
+                device["last_seen"] = utc_now_iso()
+        return message_id
+
+    def queue_event(self, device_id: str, event: dict[str, Any]) -> str:
+        message_id = str(uuid.uuid4())
+        with self._lock:
+            if device_id not in self._pending:
+                self._pending[device_id] = []
+            record = {"message_id": message_id, "timestamp": utc_now_iso(), "event": event}
+            self._pending[device_id].append(record)
             device = self._devices.get(device_id)
             if device:
                 device["last_seen"] = utc_now_iso()
@@ -80,11 +93,94 @@ class DeviceStore:
             return {k: list(v) for k, v in self._pending.items()}
 
 
+class DeviceCommunicationManager:
+    """Delivers runtime events to connected devices immediately and queues when offline."""
+
+    def __init__(self) -> None:
+        self._connections: dict[str, Any] = {}
+        self._offline_events: dict[str, list[dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+
+    def register_connection(self, device_id: str, connection: Any) -> Any:
+        with self._lock:
+            self._connections[device_id] = connection
+            queued = self._offline_events.pop(device_id, [])
+        if queued:
+            for event in queued:
+                self.send(device_id, event)
+        return connection
+
+    def unregister_connection(self, device_id: str) -> None:
+        with self._lock:
+            self._connections.pop(device_id, None)
+
+    def is_connected(self, device_id: str) -> bool:
+        with self._lock:
+            return device_id in self._connections
+
+    def send(self, device_id: str, event: dict[str, Any]) -> bool:
+        payload = dict(event)
+        payload.setdefault("event_id", str(uuid.uuid4()))
+        payload.setdefault("timestamp", utc_now_iso())
+        payload.setdefault("source", "NEXUS")
+
+        with self._lock:
+            connection = self._connections.get(device_id)
+
+        if connection is None:
+            with self._lock:
+                self._offline_events.setdefault(device_id, []).append(payload)
+            store = get_device_store()
+            store.queue_event(device_id, payload)
+            return False
+
+        try:
+            if hasattr(connection, "send"):
+                result = connection.send(json.dumps(payload))
+                if asyncio.iscoroutine(result):
+                    asyncio.run(result)
+            elif hasattr(connection, "write"):
+                connection.write(json.dumps(payload).encode("utf-8"))
+                if hasattr(connection, "flush"):
+                    connection.flush()
+            else:
+                raise TypeError("Unsupported device connection type.")
+            return True
+        except Exception:
+            with self._lock:
+                self._connections.pop(device_id, None)
+                self._offline_events.setdefault(device_id, []).append(payload)
+            store = get_device_store()
+            store.queue_event(device_id, payload)
+            return False
+
+    def broadcast(self, event: dict[str, Any]) -> None:
+        for device_id in list(self._connections):
+            self.send(device_id, event)
+
+    def get_pending_for_device(self, device_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._offline_events.get(device_id, []))
+
+    def flush_pending(self, device_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            queued = self._offline_events.pop(device_id, [])
+        for event in queued:
+            self.send(device_id, event)
+        return queued
+
+
 def get_device_store() -> DeviceStore:
     """Return the global device store instance."""
     if not hasattr(get_device_store, "_instance"):
         get_device_store._instance = DeviceStore()  # type: ignore
     return get_device_store._instance  # type: ignore
+
+
+def get_device_communication_manager() -> DeviceCommunicationManager:
+    if not hasattr(get_device_communication_manager, "_instance"):
+        get_device_communication_manager._instance = DeviceCommunicationManager()  # type: ignore
+    return get_device_communication_manager._instance  # type: ignore
 
 VALID_EVENT_TYPES = {
     "USER_MESSAGE",
@@ -296,7 +392,9 @@ class NexusRuntime:
         self.last_result: dict[str, Any] | None = None
         self._lock = threading.Lock()
         self._future_map: dict[str, Future] = {}
+        self._conversation_history: dict[str, list[dict[str, Any]]] = {}
         self.trace = RuntimeTrace(log_path)
+        self.device_communication_manager = get_device_communication_manager()
         self.context_builder_enabled = (
             context_builder_enabled
             if context_builder_enabled is not None
@@ -310,7 +408,10 @@ class NexusRuntime:
         if self.context_builder is None and self.context_builder_enabled:
             self.context_builder = ContextBuilder(self.registry, trace=self.trace)
         self.orchestrator = orchestrator or create_orchestrator(trace=self.trace.record)
-        self.cycle_config = OrchestrationCycleConfig()
+        self.cycle_config = OrchestrationCycleConfig(
+            recent_history_limit=50,
+            max_history_entries=50,
+        )
 
     def start(self) -> None:
         with self._lock:
@@ -391,7 +492,12 @@ class NexusRuntime:
             context_builder=self.context_builder.build if self.context_builder is not None else None,
             trace=self.trace,
         )
-        result = cycle.run(context)
+        conversation_key = event.source.strip() or "unknown"
+        with self._lock:
+            initial_history = list(self._conversation_history.get(conversation_key, []))
+        result = cycle.run(context, initial_history=initial_history)
+        with self._lock:
+            self._conversation_history[conversation_key] = list(result.get("history", []))[-50:]
         self.trace.record("cycle.complete", event.event_id, status=result.get("status"), termination_reason=result.get("termination_reason"), iterations=result.get("iterations"))
         return result
 

@@ -4,12 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from runtime import NexusRuntime, get_device_store, get_device_store
+import websockets
+
+from runtime import (
+    NexusRuntime,
+    get_device_communication_manager,
+    get_device_store,
+)
 
 
 def load_dotenv() -> None:
@@ -34,8 +42,66 @@ class NexusHTTPServer(ThreadingHTTPServer):
         self.runtime = runtime
 
 
+async def _handle_device_websocket(websocket) -> None:
+    manager = get_device_communication_manager()
+    store = get_device_store()
+    device_id: str | None = None
+    try:
+        first = await websocket.recv()
+        payload = json.loads(first)
+        if not isinstance(payload, dict):
+            await websocket.send(json.dumps({"status": "ERROR", "message": "device registration payload must be an object."}))
+            return
+
+        device_id = str(payload.get("device_id") or "").strip()
+        device_type = str(payload.get("device_type") or "websocket").strip()
+        if not device_id:
+            await websocket.send(json.dumps({"status": "ERROR", "message": "device_id is required."}))
+            return
+
+        if not store.get_device(device_id):
+            store.register_device(device_id, device_type)
+        manager.register_connection(device_id, websocket)
+        await websocket.send(json.dumps({"status": "SUCCESS", "type": "CONNECTED", "device_id": device_id}))
+
+        async for raw in websocket:
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(message, dict) and message.get("type") == "PING":
+                await websocket.send(json.dumps({"type": "PONG", "device_id": device_id}))
+    except Exception as exc:
+        print(f"[NEXUS:ws] Error for device {device_id}: {exc}")
+    finally:
+        if device_id:
+            manager.unregister_connection(device_id)
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+
+def start_realtime_device_server(host: str, port: int) -> threading.Thread:
+    async def _serve() -> None:
+        async with websockets.serve(_handle_device_websocket, host, port):
+            await asyncio.Future()
+
+    thread = threading.Thread(target=lambda: asyncio.run(_serve()), daemon=True)
+    thread.start()
+    return thread
+
+
 class NexusRequestHandler(BaseHTTPRequestHandler):
     server: NexusHTTPServer
+
+    def _device_event_response(self, device_id: str, event: dict[str, Any]) -> None:
+        manager = get_device_communication_manager()
+        payload = dict(event)
+        payload.setdefault("event_id", str(__import__('uuid').uuid4()))
+        payload.setdefault("timestamp", __import__('datetime').datetime.now(__import__('datetime').timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+        payload.setdefault("source", "NEXUS")
+        manager.send(device_id, payload)
 
     def _json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -116,9 +182,10 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 print(f"[NEXUS:http] Event processed, status={result.get('status')}")
                 print(f"[NEXUS:http] Response sent for /message")
                 
-                # Check for any pending messages for this device
+                # Legacy fallback: if the device is not connected in realtime mode,
+                # we still return queued offline messages for compatibility.
                 store = get_device_store()
-                pending = store.get_pending_messages(device_id)
+                pending = store.get_pending_messages(device_id, consume=True)
                 if pending:
                     result["pending_messages"] = pending
             else:
@@ -143,11 +210,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--realtime-port", type=int, default=8766)
     args = parser.parse_args()
 
     load_dotenv()
     runtime = NexusRuntime()
     runtime.start()
+    start_realtime_device_server(args.host, args.realtime_port)
+    print(f"Nexus realtime gateway listening on ws://{args.host}:{args.realtime_port}/device")
     server = NexusHTTPServer((args.host, args.port), runtime)
     print(f"Nexus HTTP gateway listening on http://{args.host}:{args.port}")
     try:
