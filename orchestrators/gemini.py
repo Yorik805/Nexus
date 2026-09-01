@@ -148,7 +148,6 @@ class GeminiOrchestrator(Orchestrator):
                             "type": "object",
                             "properties": data_props,
                             "required": required_keys,
-                            "additionalProperties": False,
                         },
                         "depends_on": {"type": "array", "items": {"type": "string"}},
                     },

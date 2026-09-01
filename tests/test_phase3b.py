@@ -93,7 +93,8 @@ def test_gemini_implements_contract_and_maps_structured_output() -> None:
     assert models.calls[0]["config"]["response_mime_type"] == "application/json"
     assert models.calls[0]["config"]["automatic_function_calling"] == {"disable": True}
     assert "tools" not in models.calls[0]["config"]
-    data_schema = models.calls[0]["config"]["response_schema"]["properties"]["actions"]["items"]["properties"]["data"]
+    action_variants = models.calls[0]["config"]["response_schema"]["properties"]["actions"]["items"]["anyOf"]
+    data_schema = action_variants[0]["properties"]["data"]
     assert data_schema.get("type") == "object"
     assert "Nexus is an AI operating system orchestrator" in models.calls[0]["config"]["system_instruction"]
     assert json.loads(models.calls[0]["contents"])["event"]["event_id"] == "event-1"

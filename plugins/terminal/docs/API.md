@@ -26,12 +26,7 @@ Every response uses the standard Nexus response shape.
   "data": {
     "command": "...",
     "cwd": "...",
-    "environment": {},
-    "timeout": 60,
-    "dynamic": true,
-    "update_interval": 1000,
-    "conversation_updates": true,
-    "metadata": {}
+    "timeout": 60
   }
 }
 ```

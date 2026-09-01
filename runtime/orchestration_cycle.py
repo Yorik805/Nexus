@@ -158,7 +158,8 @@ class OrchestrationCycle:
                 termination_reason = "COMPLETED"
                 if failed_action_ids or validation.errors:
                     final_response = {"required": True, "text": "The requested actions have not completed successfully.", "metadata": {}}
-                    status = "PARTIAL_SUCCESS" if had_validation_errors else "SUCCESS"
+                    status = "ERROR"
+                    termination_reason = "EXECUTION_FAILED"
                 else:
                     status = "SUCCESS" if not had_validation_errors else "PARTIAL_SUCCESS"
                 break

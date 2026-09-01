@@ -140,15 +140,15 @@ Fields marked (optional) may be omitted. All other fields are required.
 - **WRITE** — Store a memory.
   - `data`: `{"title": string, "category": "PROJECT"|"PERSON"|"IDEA"|"PREFERENCE", "content": string, "tags": string[] (optional)}`
 - **SEARCH** — Search relevant stored memories.
-  - `data`: `{"type": "SQLITE"|"VECTOR", "query": string, "category": string (optional), "tags": string[] (optional), "limit": integer (optional)}`
+  - `data`: `{"type": "SQLITE"|"VECTOR", "query": string, "category": string (optional), "tags": string[] (optional), "limit": integer (optional), "include_deleted": boolean (optional)}`
 - **UPDATE** — Update an existing memory.
   - `data`: `{"memory_id": string, "changes": object}`
 - **DELETE** — Delete a memory.
   - `data`: `{"memory_id": string}`
 - **GET** — Retrieve one memory.
-  - `data`: `{"memory_id": string}`
+  - `data`: `{"memory_id": string, "include_deleted": boolean (optional)}`
 - **LIST** — List stored memories.
-  - `data`: `{"category": string (optional), "limit": integer (optional)}`
+  - `data`: `{"category": string (optional), "limit": integer (optional), "include_deleted": boolean (optional)}`
 
 ### filesystem plugin
 
@@ -171,7 +171,7 @@ Fields marked (optional) may be omitted. All other fields are required.
 - **LIST** — List directory contents.
   - `data`: `{"path": string}`
 - **SEARCH** — Search for files.
-  - `data`: `{"path": string, "pattern": string}`
+  - `data`: `{"path": string, "pattern": string (optional, default "*"), "recursive": boolean (optional, default false), "type": string (optional, default "any")}`
 - **METADATA** — Get file metadata.
   - `data`: `{"path": string}`
 - **EXISTS** — Check if a path exists.

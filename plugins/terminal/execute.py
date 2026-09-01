@@ -22,11 +22,23 @@ _SUPPORTED_ACTIONS = {
 }
 
 _ACTION_CONTRACTS = {
-    "EXECUTE": {"description": "Execute a terminal command.", "required": {"command": {"type": "string"}}, "optional": {"cwd": {"type": "string"}, "timeout": {"type": "number"}}},
+    "EXECUTE": {
+        "description": "Execute a terminal command.",
+        "required": {"command": {"type": "string"}},
+        "optional": {
+            "cwd": {"type": "string"},
+            "timeout": {"type": "number"},
+            "environment": {"type": "object"},
+            "dynamic": {"type": "boolean"},
+            "update_interval": {"type": "integer"},
+            "conversation_updates": {"type": "boolean"},
+            "metadata": {"type": "object"},
+        },
+    },
     "STATUS": {"description": "Get terminal process status.", "required": {"process_id": {"type": "string"}}},
     "STOP": {"description": "Stop a terminal process.", "required": {"process_id": {"type": "string"}}},
-    "UPDATE": {"description": "Update a terminal process.", "required": {"process_id": {"type": "string"}}},
     "LIST": {"description": "List terminal processes."},
+    "UPDATE": {"description": "Update a terminal process.", "required": {"process_id": {"type": "string"}}},
     "CLEANUP": {"description": "Clean up terminal processes.", "optional": {"older_than_seconds": {"type": "number"}}},
 }
 

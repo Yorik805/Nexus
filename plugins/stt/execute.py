@@ -16,6 +16,15 @@ _SUPPORTED_ACTIONS = {
     "UNLOAD_MODEL": unload_model_action,
 }
 
+_ACTION_CONTRACTS = {
+    "DETECT_HARDWARE": {"description": "Detect available STT hardware.", "required": {}, "optional": {}},
+    "LOAD_MODEL": {"description": "Load an STT model.", "required": {"model": {"type": "string"}}, "optional": {"device": {"type": "string"}, "compute_type": {"type": "string"}}},
+    "TRANSCRIBE": {"description": "Transcribe audio.", "required": {"audio_path": {"type": "string"}}, "optional": {"language": {"type": "string"}}},
+    "GET_MODEL": {"description": "Get current model info.", "required": {}, "optional": {}},
+    "GET_DEVICE": {"description": "Get current device info.", "required": {}, "optional": {}},
+    "UNLOAD_MODEL": {"description": "Unload the current model.", "required": {}, "optional": {}},
+}
+
 
 def _build_response(status: str, message: str, data: dict | None = None) -> dict:
     return {

@@ -30,6 +30,29 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _format_kv_pair(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    if value is None:
+        return "none"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, default=str, sort_keys=True)
+    return str(value)
+
+
+def _flatten_details(details: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    for k, v in details.items():
+        if isinstance(v, dict):
+            for sub_k, sub_v in v.items():
+                parts.append(f"{sub_k}={_format_kv_pair(sub_v)}")
+        elif isinstance(v, list):
+            parts.append(f"{k}={_format_kv_pair(v)}")
+        else:
+            parts.append(f"{k}={_format_kv_pair(v)}")
+    return parts
+
+
 def _read_terminal_lines(limit: int = 200) -> list[str]:
     lines: list[str] = []
     if not LOG_PATH.exists():
@@ -48,7 +71,7 @@ def _read_terminal_lines(limit: int = 200) -> list[str]:
             step = entry.get("step", "")
             details = entry.get("details", {})
             ts = entry.get("timestamp", "")
-            kv_pairs = " ".join(f"{k}={_format_value(v)}" for k, v in details.items())
+            kv_pairs = " ".join(_flatten_details(details)) if details else ""
             formatted = f"[{ts}] {step} {kv_pairs}".strip()
             lines.append(formatted)
     except Exception:

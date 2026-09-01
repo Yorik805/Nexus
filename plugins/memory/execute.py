@@ -23,11 +23,6 @@ _SUPPORTED_ACTIONS = {
 }
 
 _ACTION_CONTRACTS = {
-    "SEARCH": {
-        "description": "Search relevant stored memories.",
-        "required": {"type": {"type": "string", "enum": ["SQLITE", "VECTOR"]}, "query": {"type": "string"}},
-        "optional": {"category": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer"}},
-    },
     "WRITE": {
         "description": "Store a memory.",
         "required": {
@@ -35,14 +30,17 @@ _ACTION_CONTRACTS = {
             "category": {"type": "string", "enum": ["PROJECT", "PERSON", "IDEA", "PREFERENCE"]},
             "content": {"type": "string"},
         },
-        "optional": {
-            "tags": {"type": "array", "items": {"type": "string"}},
-        },
+        "optional": {"tags": {"type": "array", "items": {"type": "string"}}},
     },
-    "GET": {"description": "Retrieve one memory.", "required": {"memory_id": {"type": "string"}}},
+    "SEARCH": {
+        "description": "Search relevant stored memories.",
+        "required": {"type": {"type": "string", "enum": ["SQLITE", "VECTOR"]}, "query": {"type": "string"}},
+        "optional": {"category": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer"}, "include_deleted": {"type": "boolean"}},
+    },
+    "GET": {"description": "Retrieve one memory.", "required": {"memory_id": {"type": "string"}}, "optional": {"include_deleted": {"type": "boolean"}}},
     "DELETE": {"description": "Delete one memory.", "required": {"memory_id": {"type": "string"}}},
     "UPDATE": {"description": "Update one memory.", "required": {"memory_id": {"type": "string"}, "changes": {"type": "object"}}},
-    "LIST": {"description": "List stored memories.", "optional": {"category": {"type": "string"}, "limit": {"type": "integer"}}},
+    "LIST": {"description": "List stored memories.", "optional": {"category": {"type": "string"}, "limit": {"type": "integer"}, "include_deleted": {"type": "boolean"}}},
 }
 
 

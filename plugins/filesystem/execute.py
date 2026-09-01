@@ -44,6 +44,11 @@ _ACTION_CONTRACTS["COPY"] = {"required": {"source": {"type": "string"}, "destina
 _ACTION_CONTRACTS["MOVE"] = _ACTION_CONTRACTS["COPY"]
 _ACTION_CONTRACTS["RENAME"] = {"required": {"path": {"type": "string"}, "new_name": {"type": "string"}}}
 _ACTION_CONTRACTS["MKDIR"] = {"required": {"path": {"type": "string"}}}
+_ACTION_CONTRACTS["SEARCH"] = {
+    "description": "Search for files matching a pattern.",
+    "required": {"path": {"type": "string"}},
+    "optional": {"pattern": {"type": "string"}, "recursive": {"type": "boolean"}, "type": {"type": "string"}},
+}
 
 
 def _build_response(status: str, message: str, data: dict | None = None) -> dict:
