@@ -1,0 +1,16 @@
+[Unit]
+Description=Nexus Runtime HTTP and WebSocket Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__PYTHON__ __ROOT__/nexus_server.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
