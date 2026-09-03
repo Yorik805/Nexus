@@ -9,6 +9,13 @@ cd E:\Nexus
 .\scripts\Set-NexusEnvironment.ps1
 ```
 
+On Linux, use the Bash equivalent:
+
+```bash
+cd ~/Nexus
+source ./scripts/set-nexus-environment.sh
+```
+
 The script also loads private provider variables from the root `.env` when that file exists. Keep `.env` off Git; copy it to another server only through a secure private transfer.
 
 ## 1. Start the main Nexus server
