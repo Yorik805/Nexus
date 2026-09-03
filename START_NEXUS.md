@@ -38,6 +38,8 @@ systemctl --user status nexus-voice-console.service
 
 The service currently serves HTTP. For tablet microphone access over a remote address, put it behind a trusted HTTPS reverse proxy such as Caddy, or continue using the existing mkcert HTTPS development command when testing manually.
 
+For the persistent production HTTPS setup, see [SERVER_OPERATIONS.md](SERVER_OPERATIONS.md#enable-https-permanently) and configure Tailscale Serve once with `sudo tailscale serve --bg http://127.0.0.1:3001`.
+
 The script also loads private provider variables from the root `.env` when that file exists. Keep `.env` off Git; copy it to another server only through a secure private transfer.
 
 ## 1. Start the main Nexus server

@@ -45,6 +45,44 @@ bash ./scripts/install-voice-console-service.sh
 
 The installer builds the voice console, installs the user service, enables automatic startup after reboot, and enables automatic restart after a crash.
 
+## Enable HTTPS permanently
+
+Install and connect Tailscale once:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Configure Tailscale Serve once with the voice console as its local target:
+
+```bash
+sudo tailscale serve --bg http://127.0.0.1:3001
+tailscale serve status
+```
+
+Open the HTTPS hostname shown by `tailscale serve status` on the tablet. The `--bg` configuration is saved by Tailscale and automatically resumes after the server or Tailscale daemon restarts. You do not need to regenerate certificates after a reboot.
+
+The tablet and Ubuntu server must both be connected to the same Tailscale network. The tablet should use the HTTPS hostname, not the server IP with port `3001`.
+
+## After a server reboot
+
+Check the voice console and HTTPS mapping:
+
+```bash
+systemctl --user status nexus-voice-console.service --no-pager
+tailscale serve status
+```
+
+Expected results:
+
+```text
+Active: active (running)
+https://<server-name>.<tailnet-name>.ts.net
+```
+
+The `systemctl --user` service is enabled for automatic startup by the installer. `tailscale serve --bg` is persistent independently of the Nexus repository.
+
 ## Start the Nexus runtime
 
 The voice console needs the Nexus runtime running on port `8765`:
