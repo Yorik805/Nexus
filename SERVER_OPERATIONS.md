@@ -110,6 +110,24 @@ systemctl --user status nexus-voice-console.service --no-pager
 
 Both should show `Active: active (running)`.
 
+## Enable Nexus runtime auto-start
+
+Run this on Ubuntu after the service files have been installed:
+
+```bash
+cd ~/Nexus && loginctl enable-linger "$USER" && systemctl --user daemon-reload && systemctl --user enable --now nexus.service
+```
+
+This starts `nexus_server.py` now and automatically starts it after every reboot.
+
+## Restart services anytime
+
+To restart the Nexus runtime and voice console manually:
+
+```bash
+systemctl --user restart nexus.service nexus-voice-console.service
+```
+
 ## Start the Nexus runtime manually
 
 The voice console needs the Nexus runtime running on port `8765`:
