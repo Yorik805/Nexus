@@ -5,8 +5,8 @@ import path from 'node:path'
 function configuredNexusUrl() {
   if (process.env.NEXUS_URL) return process.env.NEXUS_URL
   try {
-    const config = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), '../../../nexus.config.json'), 'utf8')) as { host?: string; runtime_port?: number; protocol?: string }
-    return `${config.protocol || 'http'}://${config.host || '127.0.0.1'}:${config.runtime_port || 8765}`
+    const config = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), '../../../nexus.config.json'), 'utf8')) as { runtime_port?: number }
+    return `http://127.0.0.1:${config.runtime_port || 8765}`
   } catch {
     return 'http://127.0.0.1:8765'
   }

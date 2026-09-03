@@ -16,7 +16,7 @@ from nexus_config import config_value, host_url
 
 DASHBOARD_PORT = int(os.getenv("NEXUS_DASHBOARD_PORT", str(config_value("dashboard_port", 11882))))
 LOG_PATH = Path(__file__).parent / "logs" / "nexus_runtime.log"
-NEXUS_RUNTIME_URL = os.getenv("NEXUS_RUNTIME_URL", host_url(port_key="runtime_port"))
+NEXUS_RUNTIME_URL = os.getenv("NEXUS_RUNTIME_URL", f"http://127.0.0.1:{config_value('runtime_port', 8765)}")
 
 
 def _format_value(value: Any) -> str:

@@ -10,6 +10,8 @@ Environment=NODE_ENV=production
 Environment=NEXUS_VOICE_CERT=__ROOT__/nexus-cert.pem
 Environment=NEXUS_VOICE_KEY=__ROOT__/nexus-key.pem
 Environment=VOICE_CONSOLE_PORT=3001
+Environment=NEXUS_URL=http://127.0.0.1:8765
+Environment=NEXUS_DASHBOARD_BACKEND_URL=http://127.0.0.1:11882
 ExecStart=__NODE__ __ROOT__/assets/web_client/nexus-voice-console/server.mjs
 Restart=always
 RestartSec=5

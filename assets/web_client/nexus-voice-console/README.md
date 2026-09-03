@@ -17,7 +17,7 @@ The dashboard backend must be configured with `NEXUS_RUNTIME_URL`, normally:
 NEXUS_RUNTIME_URL=http://127.0.0.1:8765
 ```
 
-The browser talks only to this app's same-origin `/api/state` and `/api/events` routes. `/api/events` forwards correctly shaped messages directly to Nexus, while `/api/state` reads the original dashboard event feed. This avoids browser CORS and keeps server addresses out of client JavaScript.
+The browser talks only to this app's same-origin `/api/state` and `/api/events` routes. On the server, both routes use localhost to reach Nexus and the dashboard backend; the configured host is only the address remote clients use to open the console. This avoids browser CORS and same-machine network routing issues.
 
 ## Run the voice console
 

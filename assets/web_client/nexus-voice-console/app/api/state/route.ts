@@ -5,8 +5,8 @@ import path from 'node:path'
 function configuredBackendUrl() {
   if (process.env.NEXUS_DASHBOARD_BACKEND_URL) return process.env.NEXUS_DASHBOARD_BACKEND_URL
   try {
-    const config = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), '../../../nexus.config.json'), 'utf8')) as { host?: string; dashboard_port?: number }
-    return `http://${config.host || '127.0.0.1'}:${config.dashboard_port || 11882}`
+    const config = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), '../../../nexus.config.json'), 'utf8')) as { dashboard_port?: number }
+    return `http://127.0.0.1:${config.dashboard_port || 11882}`
   } catch {
     return 'http://127.0.0.1:11882'
   }
