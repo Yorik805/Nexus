@@ -2,6 +2,8 @@
 
 This is the single startup document for the project. Use this as the canonical entry point for running Nexus locally.
 
+For server updates, restarts, logs, and recovery commands, see [SERVER_OPERATIONS.md](SERVER_OPERATIONS.md).
+
 Edit [nexus.config.json](nexus.config.json) to change the shared host and ports. Then apply its URLs to the current PowerShell session:
 
 ```powershell
