@@ -161,6 +161,7 @@ export function useNexus() {
   const wakeOnlyUntilRef = useRef(0)
   const recognitionStartingRef = useRef(false)
   const recognitionRestartAttemptsRef = useRef(0)
+  const recognitionTextRef = useRef('')
 
   const addInteraction = useCallback((role: Interaction['role'], text: string) => {
     setInteractions((current) => [...current, { id: `${Date.now()}-${role}`, role, text, timestamp: Date.now() }].slice(-MAX_INTERACTIONS))
@@ -341,7 +342,11 @@ export function useNexus() {
           else interim += text
         }
         const transcript = `${finalText} ${interim}`.trim()
-        const command = wakeCommand(transcript)
+        if (finalText.trim()) {
+          recognitionTextRef.current = `${recognitionTextRef.current} ${finalText}`.trim().slice(-160)
+        }
+        const accumulatedTranscript = `${recognitionTextRef.current} ${interim}`.trim()
+        const command = wakeCommand(accumulatedTranscript)
         if (command !== null) {
           if (speakingRef.current) {
             window.speechSynthesis.cancel()
@@ -356,6 +361,7 @@ export function useNexus() {
           }
           armForCommand()
           const cleanCommand = meaningfulCommand(command)
+          recognitionTextRef.current = ''
           setLiveTranscript(cleanCommand || 'Hey Nexus')
           if (cleanCommand) setVoiceState('user_speaking')
           if (finalText.trim() && isMeaningfulCommand(cleanCommand)) {
@@ -374,12 +380,19 @@ export function useNexus() {
         if (finalText.trim()) {
           const cleanCommand = meaningfulCommand(finalText)
           setLiveTranscript('')
+          if (normalizeSpeech(cleanCommand) === 'nexus' || normalizeSpeech(cleanCommand) === 'nex us') {
+            recognitionTextRef.current = ''
+            setVoiceState('listening')
+            return
+          }
           if (Date.now() < wakeOnlyUntilRef.current) {
+            recognitionTextRef.current = ''
             setVoiceState('listening')
             return
           }
           if (isMeaningfulCommand(cleanCommand)) {
             interruptionCommandRef.current = true
+            recognitionTextRef.current = ''
             void sendText(cleanCommand)
           } else {
             setVoiceState('listening')
@@ -434,6 +447,7 @@ export function useNexus() {
       recognitionRef.current = recognition
       listeningRef.current = true
       recognitionRestartAttemptsRef.current = 0
+      recognitionTextRef.current = ''
       setMicEnabled(true)
       setVoiceState('idle')
       recognitionStartingRef.current = true
@@ -464,6 +478,7 @@ export function useNexus() {
     return () => {
       window.clearInterval(interval)
       recognitionRef.current?.stop()
+      recognitionTextRef.current = ''
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
       streamRef.current?.getTracks().forEach((track) => track.stop())
       window.speechSynthesis?.cancel()

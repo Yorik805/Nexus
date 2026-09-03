@@ -133,6 +133,7 @@ Open http://localhost:3001.
 - If the UI reports `Speech recognition error: network`, Nexus is still connected; the browser's speech-recognition service is unavailable. The VS Code/Electron integrated browser can expose this limitation, so use the current Chrome or Edge browser at `http://localhost:3001` for wake-word recognition.
 - The wake phrase is intentionally still active during Nexus TTS: only `Hey Nexus` is allowed to interrupt playback. A short post-TTS guard discards buffered playback recognition so the spoken response cannot become a user command.
 - Wake detection accepts `hey` by itself plus close browser recognition variants such as `hay nexus`, `he nexus`, `hey nekus`, `hey nex us`, `hey nxs`, `hey ncx`, and `hey nxc`; matching is bounded by a small edit-distance check so unrelated speech is still ignored.
+- Recognition results are buffered briefly across browser callbacks, so split Android results such as `Hey` followed by `Nexus` are treated as one wake phrase.
 - Android may still play a system sound when its browser speech service starts or ends. A web page cannot mute that OS-level sound; do not retry-start recognition rapidly, and use the native Android wake-word route for genuinely silent always-on operation.
 
 ## Fish Audio hardware note
