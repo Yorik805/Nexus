@@ -1,6 +1,6 @@
 # Nexus Startup Guide
 
-This is the single startup document for the project. Use this as the canonical entry point for running Nexus locally.
+This is the local development startup guide. For the complete Ubuntu server update, auto-start, HTTPS, and recovery workflow, use [SERVER_OPERATIONS.md](SERVER_OPERATIONS.md).
 
 For server updates, restarts, logs, and recovery commands, see [SERVER_OPERATIONS.md](SERVER_OPERATIONS.md).
 

@@ -2,6 +2,24 @@
 
 Use this guide on the Ubuntu server at `~/Nexus`.
 
+## One-command setup or update
+
+Run this on `y-core` to pull the latest code, install/build the voice console, enable its automatic startup, and configure persistent HTTPS through Tailscale:
+
+```bash
+cd ~/Nexus && git pull origin main && bash ./scripts/install-voice-console-service.sh && sudo tailscale serve --bg http://127.0.0.1:3001 && tailscale serve status
+```
+
+If Tailscale is not installed yet, run this once first:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up
+```
+
+Then run the one-command setup above again.
+
+After it completes, open the HTTPS hostname printed by `tailscale serve status` on the tablet.
+
 ## Pull and apply updates
 
 ```bash
@@ -168,4 +186,4 @@ The auto-start service listens on port `3001`:
 http://100.118.250.51:3001
 ```
 
-Remote tablet microphone access requires HTTPS. The service itself currently serves HTTP; place it behind a trusted HTTPS reverse proxy for production microphone use.
+Remote tablet microphone access uses the persistent Tailscale HTTPS hostname configured above. The service itself remains HTTP on localhost; Tailscale terminates HTTPS and forwards to it.
