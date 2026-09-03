@@ -25,6 +25,8 @@ cd ~/Nexus
 bash ./scripts/install-voice-console-service.sh
 ```
 
+The installer uses `npm` when available, or `pnpm` if that is the package manager installed on the server. If neither exists, install Node.js first.
+
 This builds the voice console, starts it on port `3001`, enables it at boot, and restarts it if Node exits. Check it with:
 
 ```bash
