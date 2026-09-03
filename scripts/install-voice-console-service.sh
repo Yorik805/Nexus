@@ -27,17 +27,21 @@ fi
 NODE_PATH="$(command -v node)"
 
 cd "$CLIENT_DIR"
+echo "[1/4] Installing voice console dependencies..."
 if [[ "$PACKAGE_MANAGER_PATH" == */pnpm ]]; then
 	"$PACKAGE_MANAGER_PATH" install --frozen-lockfile --fetch-retries=5 --fetch-timeout=120000
 else
-	"$PACKAGE_MANAGER_PATH" install --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=120000 --fetch-timeout=120000
+	"$PACKAGE_MANAGER_PATH" install --no-audit --no-fund --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=120000 --fetch-timeout=120000
 fi
+echo "[2/4] Building voice console..."
 "$PACKAGE_MANAGER_PATH" run build
 
+echo "[3/4] Installing systemd user service..."
 mkdir -p "$SERVICE_DIR"
 sed -e "s#%h/Nexus#$ROOT_DIR#" -e "s#__ROOT__#$ROOT_DIR#" -e "s#__PACKAGE_MANAGER__#$PACKAGE_MANAGER_PATH#" -e "s#__NODE__#$NODE_PATH#" "$ROOT_DIR/deploy/nexus-voice-console.service" > "$SERVICE_FILE"
 
 systemctl --user daemon-reload
+echo "[4/4] Starting voice console service..."
 systemctl --user enable --now nexus-voice-console.service
 loginctl enable-linger "$USER"
 
