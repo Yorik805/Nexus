@@ -6,6 +6,16 @@ CLIENT_DIR="$ROOT_DIR/assets/web_client/nexus-voice-console"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/nexus-voice-console.service"
 
+if ! command -v npm >/dev/null 2>&1 && [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+	export NVM_DIR="$HOME/.nvm"
+	# shellcheck disable=SC1091
+	source "$NVM_DIR/nvm.sh"
+	if ! command -v npm >/dev/null 2>&1; then
+		nvm install --lts
+		nvm use --lts
+	fi
+fi
+
 if command -v npm >/dev/null 2>&1; then
 	PACKAGE_MANAGER_PATH="$(command -v npm)"
 elif command -v pnpm >/dev/null 2>&1; then
