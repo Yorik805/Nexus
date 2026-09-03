@@ -1,6 +1,6 @@
 [Unit]
 Description=Nexus Voice Console
-After=network-online.target nexus.service
+After=network-online.target nexus.service nexus-dashboard.service
 Wants=network-online.target
 
 [Service]

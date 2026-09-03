@@ -1,0 +1,18 @@
+[Unit]
+Description=Nexus Dashboard Backend
+After=network-online.target nexus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+Environment=PYTHONUNBUFFERED=1
+Environment=NEXUS_RUNTIME_URL=http://127.0.0.1:8765
+Environment=NEXUS_DASHBOARD_PORT=11882
+ExecStart=__PYTHON__ __ROOT__/nexus_dashboard_server.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

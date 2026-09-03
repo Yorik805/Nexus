@@ -4,7 +4,7 @@ Use this guide on the Ubuntu server at `~/Nexus`.
 
 ## One-command setup or update
 
-Run this on `y-core` to pull the latest code, install/build the voice console, auto-start `nexus_server.py` and the voice console, and configure persistent HTTPS through Tailscale:
+Run this on `y-core` to pull the latest code, install/build the voice console, auto-start the runtime, dashboard backend, and voice console, and configure persistent HTTPS through Tailscale:
 
 ```bash
 cd ~/Nexus && git pull origin main && bash ./scripts/install-voice-console-service.sh && sudo tailscale serve --bg http://127.0.0.1:3001 && tailscale serve status
@@ -61,7 +61,7 @@ cd ~/Nexus
 bash ./scripts/install-voice-console-service.sh
 ```
 
-The installer builds the voice console, installs both user services, enables automatic startup after reboot, and enables automatic restart after a crash.
+The installer builds the voice console, installs all three user services, enables automatic startup after reboot, and enables automatic restart after a crash.
 
 ## Enable HTTPS permanently
 
@@ -101,14 +101,15 @@ https://<server-name>.<tailnet-name>.ts.net
 
 The `systemctl --user` service is enabled for automatic startup by the installer. `tailscale serve --bg` is persistent independently of the Nexus repository.
 
-## Check both services
+## Check all services
 
 ```bash
 systemctl --user status nexus.service --no-pager
+systemctl --user status nexus-dashboard.service --no-pager
 systemctl --user status nexus-voice-console.service --no-pager
 ```
 
-Both should show `Active: active (running)`.
+All three should show `Active: active (running)`.
 
 ## Enable Nexus runtime auto-start
 
@@ -125,7 +126,7 @@ This starts `nexus_server.py` now and automatically starts it after every reboot
 To restart the Nexus runtime and voice console manually:
 
 ```bash
-systemctl --user restart nexus.service nexus-voice-console.service
+systemctl --user restart nexus.service nexus-dashboard.service nexus-voice-console.service
 ```
 
 ## Start the Nexus runtime manually
