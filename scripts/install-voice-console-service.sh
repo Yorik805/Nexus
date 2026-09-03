@@ -24,6 +24,7 @@ else
 	echo "Node.js and npm or pnpm are required. Install Node.js, then run this script again." >&2
 	exit 1
 fi
+NODE_PATH="$(command -v node)"
 
 cd "$CLIENT_DIR"
 if [[ "$PACKAGE_MANAGER_PATH" == */pnpm ]]; then
@@ -34,7 +35,7 @@ fi
 "$PACKAGE_MANAGER_PATH" run build
 
 mkdir -p "$SERVICE_DIR"
-sed -e "s#%h/Nexus#$ROOT_DIR#" -e "s#__PACKAGE_MANAGER__#$PACKAGE_MANAGER_PATH#" "$ROOT_DIR/deploy/nexus-voice-console.service" > "$SERVICE_FILE"
+sed -e "s#%h/Nexus#$ROOT_DIR#" -e "s#__ROOT__#$ROOT_DIR#" -e "s#__PACKAGE_MANAGER__#$PACKAGE_MANAGER_PATH#" -e "s#__NODE__#$NODE_PATH#" "$ROOT_DIR/deploy/nexus-voice-console.service" > "$SERVICE_FILE"
 
 systemctl --user daemon-reload
 systemctl --user enable --now nexus-voice-console.service
