@@ -27,9 +27,9 @@ fi
 
 cd "$CLIENT_DIR"
 if [[ "$PACKAGE_MANAGER_PATH" == */pnpm ]]; then
-	"$PACKAGE_MANAGER_PATH" install --frozen-lockfile
+	"$PACKAGE_MANAGER_PATH" install --frozen-lockfile --fetch-retries=5 --fetch-timeout=120000
 else
-	"$PACKAGE_MANAGER_PATH" install
+	"$PACKAGE_MANAGER_PATH" install --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-mintimeout=5000 --fetch-retry-maxtimeout=120000 --fetch-timeout=120000
 fi
 "$PACKAGE_MANAGER_PATH" run build
 
