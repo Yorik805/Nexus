@@ -79,3 +79,4 @@ OLLAMA_KEEP_ALIVE=10m
 - The project's server loads `.env` automatically from the working directory in [nexus_server.py](nexus_server.py).
 - Real credentials should stay in a local `.env` file and should not be committed to source control.
 - The checked-in template in [.env.example](.env.example) is the safe version to share.
+- `scripts/Set-NexusEnvironment.ps1` loads the root `.env` into the current PowerShell process without printing secret values.
