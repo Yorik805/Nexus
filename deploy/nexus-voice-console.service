@@ -1,0 +1,16 @@
+[Unit]
+Description=Nexus Voice Console
+After=network-online.target nexus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Nexus/assets/web_client/nexus-voice-console
+Environment=NODE_ENV=production
+ExecStart=__NPM__ run start -- -H 0.0.0.0 -p 3001
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

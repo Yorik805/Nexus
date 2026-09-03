@@ -45,6 +45,20 @@ Set-Location "E:\Nexus"; .\scripts\Set-NexusEnvironment.ps1; python .\nexus_serv
 
 The client runs on port `3001` so it does not replace or conflict with the original dashboard on port `3000`. For a LAN/Tailscale browser connection, use the network URL printed by Next.js.
 
+### Auto-start on the Linux server
+
+From `~/Nexus`, run once:
+
+```bash
+bash ./scripts/install-voice-console-service.sh
+```
+
+The service builds the client, starts it on port `3001`, starts automatically after reboot, and restarts after a crash. View logs with:
+
+```bash
+journalctl --user -u nexus-voice-console.service -f
+```
+
 ## HTTPS for microphone access
 
 Microphone access is allowed over plain HTTP on `localhost`, but a network address such as `100.118.250.51` must use HTTPS. The browser must also trust the certificate.

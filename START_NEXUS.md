@@ -16,6 +16,23 @@ cd ~/Nexus
 source ./scripts/set-nexus-environment.sh
 ```
 
+## Auto-start the voice console on Linux
+
+Run this once on the server after pulling the repository:
+
+```bash
+cd ~/Nexus
+bash ./scripts/install-voice-console-service.sh
+```
+
+This builds the voice console, starts it on port `3001`, enables it at boot, and restarts it if Node exits. Check it with:
+
+```bash
+systemctl --user status nexus-voice-console.service
+```
+
+The service currently serves HTTP. For tablet microphone access over a remote address, put it behind a trusted HTTPS reverse proxy such as Caddy, or continue using the existing mkcert HTTPS development command when testing manually.
+
 The script also loads private provider variables from the root `.env` when that file exists. Keep `.env` off Git; copy it to another server only through a secure private transfer.
 
 ## 1. Start the main Nexus server
