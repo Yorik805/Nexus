@@ -37,6 +37,11 @@ if [[ -z "$PYTHON_PATH" ]]; then
 fi
 
 cd "$CLIENT_DIR"
+if [[ ! -f "$ROOT_DIR/nexus-cert.pem" || ! -f "$ROOT_DIR/nexus-key.pem" ]]; then
+	echo "HTTPS certificate files are required: $ROOT_DIR/nexus-cert.pem and $ROOT_DIR/nexus-key.pem" >&2
+	echo "Copy the certificate and key to the Nexus root, then run this installer again." >&2
+	exit 1
+fi
 echo "[1/4] Installing voice console dependencies..."
 if [[ "$PACKAGE_MANAGER_PATH" == */pnpm ]]; then
 	"$PACKAGE_MANAGER_PATH" install --frozen-lockfile --fetch-retries=5 --fetch-timeout=120000

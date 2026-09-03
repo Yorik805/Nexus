@@ -7,7 +7,10 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/Nexus/assets/web_client/nexus-voice-console
 Environment=NODE_ENV=production
-ExecStart=__NODE__ __ROOT__/assets/web_client/nexus-voice-console/node_modules/next/dist/bin/next start -H 0.0.0.0 -p 3001
+Environment=NEXUS_VOICE_CERT=__ROOT__/nexus-cert.pem
+Environment=NEXUS_VOICE_KEY=__ROOT__/nexus-key.pem
+Environment=VOICE_CONSOLE_PORT=3001
+ExecStart=__NODE__ __ROOT__/assets/web_client/nexus-voice-console/server.mjs
 Restart=always
 RestartSec=5
 TimeoutStopSec=20
