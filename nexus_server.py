@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import os
+import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -83,9 +84,9 @@ async def _handle_device_websocket(websocket) -> None:
                 pass
 
 
-def start_realtime_device_server(host: str, port: int) -> threading.Thread:
+def start_realtime_device_server(host: str, port: int, ssl_context: ssl.SSLContext | None = None) -> threading.Thread:
     async def _serve() -> None:
-        async with websockets.serve(_handle_device_websocket, host, port):
+        async with websockets.serve(_handle_device_websocket, host, port, ssl=ssl_context):
             await asyncio.Future()
 
     thread = threading.Thread(target=lambda: asyncio.run(_serve()), daemon=True)
@@ -213,15 +214,29 @@ def main() -> None:
     parser.add_argument("--host", default=str(config.get("bind_host", "0.0.0.0")))
     parser.add_argument("--port", type=int, default=int(config.get("runtime_port", 8765)))
     parser.add_argument("--realtime-port", type=int, default=int(config.get("realtime_port", 8766)))
+    parser.add_argument("--https-cert", help="Path to the HTTPS certificate PEM file.")
+    parser.add_argument("--https-key", help="Path to the HTTPS private key PEM file.")
     args = parser.parse_args()
 
     load_dotenv()
+    if bool(args.https_cert) != bool(args.https_key):
+        parser.error("--https-cert and --https-key must be provided together.")
+    ssl_context: ssl.SSLContext | None = None
+    scheme = "http"
+    websocket_scheme = "ws"
+    if args.https_cert and args.https_key:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(certfile=args.https_cert, keyfile=args.https_key)
+        scheme = "https"
+        websocket_scheme = "wss"
     runtime = NexusRuntime()
     runtime.start()
-    start_realtime_device_server(args.host, args.realtime_port)
-    print(f"Nexus realtime gateway listening on ws://{args.host}:{args.realtime_port}/device")
+    start_realtime_device_server(args.host, args.realtime_port, ssl_context)
+    print(f"Nexus realtime gateway listening on {websocket_scheme}://{args.host}:{args.realtime_port}/device")
     server = NexusHTTPServer((args.host, args.port), runtime)
-    print(f"Nexus HTTP gateway listening on http://{args.host}:{args.port}")
+    if ssl_context is not None:
+        server.socket = ssl_context.wrap_socket(server.socket, server_side=True)
+    print(f"Nexus HTTP gateway listening on {scheme}://{args.host}:{args.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

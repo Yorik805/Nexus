@@ -196,3 +196,15 @@ http://100.118.250.51:3001
 ```
 
 Remote tablet microphone access uses the persistent Tailscale HTTPS hostname configured above. The service itself remains HTTP on localhost; Tailscale terminates HTTPS and forwards to it.
+
+## Run the Python runtime with HTTPS directly
+
+If the certificate and key are stored in `~/Nexus`, start the Python runtime with:
+
+```bash
+cd ~/Nexus
+source ./scripts/set-nexus-environment.sh
+python3 nexus_server.py --https-cert ./nexus-cert.pem --https-key ./nexus-key.pem
+```
+
+This serves the runtime on `https://<host>:8765` and the realtime gateway on `wss://<host>:8766/device`. The certificate must include the hostname or IP used by clients. The normal auto-start service remains HTTP unless its service command is changed to include these same flags.
