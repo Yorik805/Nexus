@@ -1,6 +1,7 @@
 __pycache__/
 .venv/
 *.pyc
+*.tsbuildinfo
 *.db
 *.sqlite
 *.sqlite3

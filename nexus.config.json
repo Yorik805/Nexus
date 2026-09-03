@@ -1,0 +1,14 @@
+{
+  "host": "100.118.250.51",
+  "bind_host": "0.0.0.0",
+  "runtime_port": 8765,
+  "realtime_port": 8766,
+  "dashboard_port": 11882,
+  "voice_console_port": 3001,
+  "protocol": "http",
+  "https": {
+    "enabled": true,
+    "cert_file": "assets/web_client/nexus-voice-console/nexus-cert.pem",
+    "key_file": "assets/web_client/nexus-voice-console/nexus-key.pem"
+  }
+}

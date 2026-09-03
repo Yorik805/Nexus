@@ -18,6 +18,7 @@ from runtime import (
     get_device_communication_manager,
     get_device_store,
 )
+from nexus_config import load_config
 
 
 def load_dotenv() -> None:
@@ -207,10 +208,11 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    config = load_config()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--realtime-port", type=int, default=8766)
+    parser.add_argument("--host", default=str(config.get("bind_host", "0.0.0.0")))
+    parser.add_argument("--port", type=int, default=int(config.get("runtime_port", 8765)))
+    parser.add_argument("--realtime-port", type=int, default=int(config.get("realtime_port", 8766)))
     args = parser.parse_args()
 
     load_dotenv()

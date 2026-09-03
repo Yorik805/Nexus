@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
+from nexus_config import config_value, host_url
 
-DASHBOARD_PORT = int(os.getenv("NEXUS_DASHBOARD_PORT", "11882"))
+DASHBOARD_PORT = int(os.getenv("NEXUS_DASHBOARD_PORT", str(config_value("dashboard_port", 11882))))
 LOG_PATH = Path(__file__).parent / "logs" / "nexus_runtime.log"
-NEXUS_RUNTIME_URL = os.getenv("NEXUS_RUNTIME_URL", "http://127.0.0.1:8765")
+NEXUS_RUNTIME_URL = os.getenv("NEXUS_RUNTIME_URL", host_url(port_key="runtime_port"))
 
 
 def _format_value(value: Any) -> str:

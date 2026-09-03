@@ -2,17 +2,24 @@
 
 This is the single startup document for the project. Use this as the canonical entry point for running Nexus locally.
 
+Edit [nexus.config.json](nexus.config.json) to change the shared host and ports. Then apply its URLs to the current PowerShell session:
+
+```powershell
+cd E:\Nexus
+.\scripts\Set-NexusEnvironment.ps1
+```
+
 ## 1. Start the main Nexus server
 
 ```powershell
 cd E:\Nexus
-python nexus_server.py --host 127.0.0.1 --port 8765
+python nexus_server.py
 ```
 
 This starts:
 - the Nexus runtime
-- the HTTP gateway on http://127.0.0.1:8765
-- the realtime WebSocket gateway on ws://127.0.0.1:8766/device
+- the HTTP gateway on the configured host and port
+- the realtime WebSocket gateway on the configured host and port
 
 Keep this terminal running.
 
@@ -22,12 +29,10 @@ Open a second terminal:
 
 ```powershell
 cd E:\Nexus
-$env:NEXUS_DASHBOARD_PORT = "11882"
-$env:NEXUS_RUNTIME_URL = "http://127.0.0.1:8765"
 python .\nexus_dashboard_server.py
 ```
 
-- This serves the dashboard API on http://127.0.0.1:11882
+- This serves the dashboard API on the configured host and port
 - It reads runtime logs and exposes state to the frontend
 
 ## 3. Start the frontend dashboard
@@ -36,7 +41,6 @@ Open a third terminal:
 
 ```powershell
 cd E:\Nexus\nexus-runtime-dashboard
-$env:NEXUS_DASHBOARD_BACKEND_URL = "http://127.0.0.1:11882"
 npm run dev
 ```
 
@@ -55,17 +59,14 @@ python assets\client\nexus_connection.py 127.0.0.1 8765
 ```powershell
 # Terminal 1
 cd E:\Nexus
-python nexus_server.py --host 127.0.0.1 --port 8765
+python nexus_server.py
 
 # Terminal 2
 cd E:\Nexus
-$env:NEXUS_DASHBOARD_PORT = "11882"
-$env:NEXUS_RUNTIME_URL = "http://127.0.0.1:8765"
 python .\nexus_dashboard_server.py
 
 # Terminal 3
 cd E:\Nexus\nexus-runtime-dashboard
-$env:NEXUS_DASHBOARD_BACKEND_URL = "http://127.0.0.1:11882"
 npm run dev
 ```
 

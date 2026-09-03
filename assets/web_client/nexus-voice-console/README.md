@@ -40,7 +40,7 @@ Set-Location "E:\Nexus"; $env:NEXUS_DASHBOARD_PORT = "11882"; $env:NEXUS_RUNTIME
 Start Nexus itself in another terminal if it is not already running:
 
 ```powershell
-Set-Location "E:\Nexus"; python .\nexus_server.py --host 127.0.0.1 --port 8765
+Set-Location "E:\Nexus"; .\scripts\Set-NexusEnvironment.ps1; python .\nexus_server.py
 ```
 
 The client runs on port `3001` so it does not replace or conflict with the original dashboard on port `3000`. For a LAN/Tailscale browser connection, use the network URL printed by Next.js.
