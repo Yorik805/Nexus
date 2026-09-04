@@ -121,19 +121,20 @@ Open http://localhost:3001.
 - Debug mode displays the dashboard event records using `TIME`, `TYPE`, `SOURCE`, and `PAYLOAD`.
 - Voice requests are sent as `USER_MESSAGE` events with source `web-client`.
 - The browser uses `getUserMedia` for permission-controlled microphone access. The stream stays active while the mic is enabled, but ordinary speech is ignored until the wake phrase `Hey Nexus` is detected.
-- Speech recognition uses the server-side `faster-whisper` service over a secure PCM WebSocket on port `8767`; the browser no longer uses `SpeechRecognition` or `webkitSpeechRecognition`.
+- Speech recognition uses the browser's `SpeechRecognition` or `webkitSpeechRecognition` implementation.
 - Nexus responses are spoken through `speechSynthesis` when available.
 - If `FISH_AUDIO_API_KEY` and `FISH_AUDIO_VOICE_ID` are configured, responses use the server-side Fish Audio API first; otherwise the browser TTS fallback is used.
 - Speech detected while Nexus is speaking only interrupts after the wake phrase is detected, preventing most Nexus echo from becoming a user request.
 - After `Hey Nexus`, command listening stays active for 90 seconds. Any recognized speech during that window resets the timer. When Nexus finishes speaking, the 90-second command window starts again; after silence it returns to standby while passive wake-word monitoring remains available.
 - While the command window is active, interim recognition text is shown immediately and the voice panel switches to `USER SPEAKING`; a blank or unusable final result returns to `LISTENING` without stopping the recognizer.
 - If a wake-word interruption contains no meaningful command, playback resumes after a short grace period from the nearest browser speech boundary. Exact word-perfect resumption depends on browser TTS boundary support.
-- Browser text-to-speech support varies by browser. Exact speech resumption is not attempted after interruption.
+- Browser speech recognition and text-to-speech support vary by browser. Continuous recognition can stop and restart automatically, and exact speech resumption is not attempted after interruption.
+- When the browser ends a recognition session, the client automatically retries with increasing delays and keeps the microphone stream enabled. If the browser speech service remains unavailable after several retries, toggle the mic once to re-authorize it.
 - If the UI reports `Speech recognition error: network`, Nexus is still connected; the browser's speech-recognition service is unavailable. The VS Code/Electron integrated browser can expose this limitation, so use the current Chrome or Edge browser at `http://localhost:3001` for wake-word recognition.
 - The wake phrase is intentionally still active during Nexus TTS: only `Hey Nexus` is allowed to interrupt playback. A short post-TTS guard discards buffered playback recognition so the spoken response cannot become a user command.
 - Wake detection accepts `hey` by itself plus close browser recognition variants such as `hay nexus`, `he nexus`, `hey nekus`, `hey nex us`, `hey nxs`, `hey ncx`, and `hey nxc`; matching is bounded by a small edit-distance check so unrelated speech is still ignored.
 - Recognition results are buffered briefly across browser callbacks, so split Android results such as `Hey` followed by `Nexus` are treated as one wake phrase.
-- Because the browser only streams microphone PCM and does not start browser speech recognition, Android browser STT start/stop sounds are removed. The server-side Whisper service is the component that detects VAD, wake words, transcripts, and voice states.
+- Android may still play a system sound when its browser speech service starts or ends. A web page cannot mute that OS-level sound; do not retry-start recognition rapidly, and use the native Android wake-word route for genuinely silent always-on operation.
 
 ## Fish Audio hardware note
 

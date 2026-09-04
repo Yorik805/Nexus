@@ -61,7 +61,7 @@ cd ~/Nexus
 bash ./scripts/install-voice-console-service.sh
 ```
 
-The installer builds the voice console, installs the runtime, dashboard backend, and server-side Whisper STT user services, enables automatic startup after reboot, and enables automatic restart after a crash.
+The installer builds the voice console, installs all three user services, enables automatic startup after reboot, and enables automatic restart after a crash.
 
 ## Enable HTTPS permanently
 
@@ -106,11 +106,10 @@ The `systemctl --user` service is enabled for automatic startup by the installer
 ```bash
 systemctl --user status nexus.service --no-pager
 systemctl --user status nexus-dashboard.service --no-pager
-systemctl --user status nexus-voice-stt.service --no-pager
 systemctl --user status nexus-voice-console.service --no-pager
 ```
 
-All four should show `Active: active (running)`.
+All three should show `Active: active (running)`.
 
 ## Enable Nexus runtime auto-start
 
@@ -217,7 +216,7 @@ http://100.118.250.51:3001
 
 Remote tablet microphone access uses the voice console's direct HTTPS endpoint at `https://<server-host>:3001`. Tailscale Serve remains optional; if enabled, it can still proxy to the HTTPS service with `https+insecure://127.0.0.1:3001`.
 
-The voice console service itself now starts HTTPS using `~/Nexus/nexus-cert.pem` and `~/Nexus/nexus-key.pem`. Copy those two private files to the server before running the installer; they are ignored by Git. The server-side Whisper STT service uses the same certificate on secure WebSocket port `8767`.
+The voice console service itself now starts HTTPS using `~/Nexus/nexus-cert.pem` and `~/Nexus/nexus-key.pem`. Copy those two private files to the server before running the installer; they are ignored by Git.
 
 ## Run the Python runtime with HTTPS directly
 
