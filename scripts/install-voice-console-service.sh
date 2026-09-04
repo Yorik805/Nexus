@@ -7,6 +7,7 @@ SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/nexus-voice-console.service"
 RUNTIME_SERVICE_FILE="$SERVICE_DIR/nexus.service"
 DASHBOARD_SERVICE_FILE="$SERVICE_DIR/nexus-dashboard.service"
+VOICE_STT_SERVICE_FILE="$SERVICE_DIR/nexus-voice-stt.service"
 
 if ! command -v npm >/dev/null 2>&1 && [[ -s "$HOME/.nvm/nvm.sh" ]]; then
 	export NVM_DIR="$HOME/.nvm"
@@ -36,6 +37,10 @@ if [[ -z "$PYTHON_PATH" ]]; then
 	echo "python3 or $ROOT_DIR/.venv/bin/python is required." >&2
 	exit 1
 fi
+if ! "$PYTHON_PATH" -c "import faster_whisper, numpy" >/dev/null 2>&1; then
+	echo "[voice-stt] Installing faster-whisper and numpy..."
+	"$PYTHON_PATH" -m pip install --retries 5 --timeout 120 faster-whisper numpy
+fi
 
 cd "$CLIENT_DIR"
 if [[ ! -f "$ROOT_DIR/nexus-cert.pem" || ! -f "$ROOT_DIR/nexus-key.pem" ]]; then
@@ -57,12 +62,14 @@ mkdir -p "$SERVICE_DIR"
 sed -e "s#%h/Nexus#$ROOT_DIR#" -e "s#__ROOT__#$ROOT_DIR#" -e "s#__PACKAGE_MANAGER__#$PACKAGE_MANAGER_PATH#" -e "s#__NODE__#$NODE_PATH#" "$ROOT_DIR/deploy/nexus-voice-console.service" > "$SERVICE_FILE"
 sed -e "s#__ROOT__#$ROOT_DIR#" -e "s#__PYTHON__#$PYTHON_PATH#" "$ROOT_DIR/deploy/nexus.service" > "$RUNTIME_SERVICE_FILE"
 sed -e "s#__ROOT__#$ROOT_DIR#" -e "s#__PYTHON__#$PYTHON_PATH#" "$ROOT_DIR/deploy/nexus-dashboard.service" > "$DASHBOARD_SERVICE_FILE"
+sed -e "s#__ROOT__#$ROOT_DIR#" -e "s#__PYTHON__#$PYTHON_PATH#" "$ROOT_DIR/deploy/nexus-voice-stt.service" > "$VOICE_STT_SERVICE_FILE"
 
 systemctl --user daemon-reload
 echo "[4/4] Starting voice console service..."
 loginctl enable-linger "$USER"
 systemctl --user enable --now nexus.service
 systemctl --user enable --now nexus-dashboard.service
+systemctl --user enable --now nexus-voice-stt.service
 systemctl --user enable --now nexus-voice-console.service
 
 systemctl --user --no-pager --full status nexus-voice-console.service

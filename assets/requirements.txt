@@ -1,4 +1,5 @@
 faster-whisper
+numpy
 sounddevice
 pyttsx3
 google-genai

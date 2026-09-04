@@ -1,0 +1,16 @@
+[Unit]
+Description=Nexus Server-side Whisper Voice STT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__PYTHON__ __ROOT__/voice_stt_server.py --host 0.0.0.0 --port 8767 --model tiny --compute-type int8 --https-cert __ROOT__/nexus-cert.pem --https-key __ROOT__/nexus-key.pem
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

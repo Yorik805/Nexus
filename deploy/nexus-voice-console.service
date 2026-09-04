@@ -1,7 +1,8 @@
 [Unit]
 Description=Nexus Voice Console
-After=network-online.target nexus.service nexus-dashboard.service
+After=network-online.target nexus.service nexus-dashboard.service nexus-voice-stt.service
 Wants=network-online.target
+Wants=nexus-voice-stt.service
 
 [Service]
 Type=simple
