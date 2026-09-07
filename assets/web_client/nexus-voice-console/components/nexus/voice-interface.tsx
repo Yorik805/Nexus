@@ -3,8 +3,10 @@
 import {
   AlertTriangle,
   Hand,
+  Loader2,
   Mic,
   MicOff,
+  RotateCw,
   Square,
   Volume2,
 } from 'lucide-react'
@@ -26,8 +28,8 @@ const STATE_CONFIG: Record<VoiceState, StateConfig> = {
   processing: { title: 'PROCESSING', subtitle: 'Nexus is handling the event…', accent: 'cat-validator' },
   nexus_speaking: { title: 'NEXUS SPEAKING', subtitle: 'Responding via text-to-speech', accent: 'cat-event' },
   interruption: { title: 'INTERRUPTION DETECTED', subtitle: 'Nexus speech paused — listening to user', accent: 'cat-validator' },
-  mic_disabled: { title: 'MICROPHONE DISABLED', subtitle: 'Enable the mic to talk to Nexus', accent: 'muted-foreground' },
-  error: { title: 'VOICE INPUT ERROR', subtitle: 'Browser speech recognition is unavailable', accent: 'cat-error' },
+  mic_disabled: { title: 'MICROPHONE DISABLED', subtitle: 'Tap the mic or button to start', accent: 'muted-foreground' },
+  error: { title: 'VOICE INPUT ERROR', subtitle: 'Check microphone permissions or HTTPS connection', accent: 'cat-error' },
 }
 
 export function VoiceInterface({
@@ -37,6 +39,9 @@ export function VoiceInterface({
   spokenResponse,
   onStopSpeaking,
   onInterrupt,
+  onToggleMic,
+  micEnabled,
+  isStartingMic,
 }: {
   voiceState: VoiceState
   errorMessage?: string
@@ -44,6 +49,9 @@ export function VoiceInterface({
   spokenResponse: string
   onStopSpeaking: () => void
   onInterrupt: () => void
+  onToggleMic?: () => void
+  micEnabled?: boolean
+  isStartingMic?: boolean
 }) {
   const cfg = STATE_CONFIG[voiceState]
   const isListening = voiceState === 'listening'
@@ -83,18 +91,38 @@ export function VoiceInterface({
           />
         )}
 
-        {/* Core disc */}
-        <div
+        {/* Core disc - now interactive and clickable */}
+        <button
+          type="button"
+          onClick={onToggleMic}
+          disabled={isStartingMic}
+          aria-label={
+            isStartingMic
+              ? 'Starting microphone'
+              : micEnabled
+              ? 'Mute microphone'
+              : 'Enable microphone'
+          }
+          title={
+            isStartingMic
+              ? 'Starting microphone…'
+              : micEnabled
+              ? 'Click to turn mic off'
+              : 'Click to turn mic on'
+          }
           className={cn(
-            'relative flex size-40 items-center justify-center rounded-full ring-1 transition-colors md:size-44',
+            'group relative flex size-40 items-center justify-center rounded-full ring-1 transition-all md:size-44 select-none',
+            'cursor-pointer hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
             discClasses(cfg.accent, isListening || isNexusSpeaking),
+            isStartingMic && 'animate-pulse ring-primary/60 cursor-wait',
           )}
         >
           <StateIcon
             voiceState={voiceState}
-            className={cn('size-16 md:size-20', textColor(cfg.accent))}
+            isStartingMic={isStartingMic}
+            className={cn('size-16 md:size-20 transition-transform group-hover:scale-105', textColor(cfg.accent))}
           />
-        </div>
+        </button>
       </div>
 
       {/* State label */}
@@ -140,7 +168,7 @@ export function VoiceInterface({
             <button
               type="button"
               onClick={onStopSpeaking}
-              className="flex items-center gap-2 rounded-md border border-cat-error/40 bg-cat-error/10 px-4 py-2 font-mono text-xs tracking-widest text-cat-error transition-colors hover:bg-cat-error/20"
+              className="flex items-center gap-2 rounded-md border border-cat-error/40 bg-cat-error/10 px-4 py-2 font-mono text-xs tracking-widest text-cat-error transition-colors hover:bg-cat-error/20 cursor-pointer active:scale-95"
             >
               <Square className="size-3.5 fill-current" />
               STOP SPEAKING
@@ -174,15 +202,49 @@ export function VoiceInterface({
         )}
 
         {isMuted && (
-          <p className="text-pretty text-center text-sm text-muted-foreground">
-            The microphone is off. Voice capture and continuous listening are paused.
-          </p>
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-pretty text-center text-sm text-muted-foreground">
+              The microphone is off. Voice capture and continuous listening are paused.
+            </p>
+            {onToggleMic && (
+              <button
+                type="button"
+                onClick={onToggleMic}
+                disabled={isStartingMic}
+                className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/20 px-5 py-2.5 font-mono text-xs font-semibold tracking-widest text-primary transition-all hover:bg-primary/30 active:scale-95 cursor-pointer shadow-[0_0_16px_rgba(var(--primary-rgb),0.25)]"
+              >
+                {isStartingMic ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Mic className="size-4" />
+                )}
+                {isStartingMic ? 'STARTING MIC…' : 'TURN MIC ON'}
+              </button>
+            )}
+          </div>
         )}
 
         {isError && (
-          <p className="text-pretty text-center text-sm text-cat-error">
-            {errorMessage || 'Unable to start voice capture. Check microphone permissions and try again.'}
-          </p>
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-pretty text-center text-sm text-cat-error">
+              {errorMessage || 'Unable to start voice capture. Check microphone permissions and try again.'}
+            </p>
+            {onToggleMic && (
+              <button
+                type="button"
+                onClick={onToggleMic}
+                disabled={isStartingMic}
+                className="flex items-center gap-2 rounded-md border border-cat-error/50 bg-cat-error/20 px-5 py-2.5 font-mono text-xs font-semibold tracking-widest text-cat-error transition-all hover:bg-cat-error/30 active:scale-95 cursor-pointer"
+              >
+                {isStartingMic ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RotateCw className="size-4" />
+                )}
+                {isStartingMic ? 'STARTING MIC…' : 'RETRY MICROPHONE'}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </section>
@@ -191,11 +253,16 @@ export function VoiceInterface({
 
 function StateIcon({
   voiceState,
+  isStartingMic,
   className,
 }: {
   voiceState: VoiceState
+  isStartingMic?: boolean
   className?: string
 }) {
+  if (isStartingMic) {
+    return <Loader2 className={cn(className, 'animate-spin text-primary')} />
+  }
   switch (voiceState) {
     case 'mic_disabled':
       return <MicOff className={className} />

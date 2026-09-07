@@ -32,13 +32,12 @@ declare global {
 
 const MAX_EVENTS = 100
 const MAX_INTERACTIONS = 6
-const WAKE_WORD = 'hey nexus'
-const ACTIVE_LISTENING_TIMEOUT_MS = 90_000
+const WAKE_WORD = 'hey'
+const WAKE_SILENCE_TIMEOUT_MS = 5_000
+const SPEECH_PAUSE_TIMEOUT_MS = 1_400
 const INTERRUPTION_GRACE_MS = 1_800
 const TTS_RESTART_DELAY_MS = 450
-const POST_TTS_IGNORE_MS = 1_200
-const WAKE_ONLY_AFTER_TTS_MS = 2_000
-const RECOGNITION_RESTART_DELAY_MS = 700
+const RECOGNITION_RESTART_DELAY_MS = 300
 const MAX_RECOGNITION_RESTART_ATTEMPTS = 8
 
 function categoryFor(kind: string, source: string, message: string): NexusEvent['category'] {
@@ -108,21 +107,38 @@ function editDistance(left: string, right: string): number {
   return row[right.length]
 }
 
-function wakeCommand(value: string): string | null {
-  const normalized = normalizeSpeech(value)
-  const words = normalized.split(' ')
-  for (let index = 0; index < words.length; index += 1) {
-    if (!['hey', 'hay', 'he'].includes(words[index])) continue
-    if (index === words.length - 1) return ''
-    for (let count = 1; count <= 3 && index + count < words.length; count += 1) {
-      const phrase = words.slice(index + 1, index + count + 1).join('')
-      const isConsonantForm = ['nxs', 'ncx', 'nxc', 'nex', 'nexus'].includes(phrase)
-      if (isConsonantForm || editDistance(phrase, 'nexus') <= 2) {
-        return words.slice(index + count + 1).join(' ').trim()
+function extractWakeWord(value: string): { detected: boolean; trailingText: string } {
+  const normalized = normalizeSpeech(value).toLowerCase()
+  const words = normalized.split(' ').filter(Boolean)
+  for (let index = 0; index < Math.min(words.length, 3); index += 1) {
+    if (words[index] === 'hey' && index + 1 < words.length) {
+      const target = words[index + 1]
+      if (['nexus', 'nex', 'nx', 'nxx', 'nex us'].includes(target) || editDistance(target, 'nexus') <= 2) {
+        return { detected: true, trailingText: words.slice(index + 2).join(' ').trim() }
       }
     }
+    if (['nexus', 'nex', 'nx', 'nxx'].includes(words[index]) || editDistance(words[index], 'nexus') <= 1) {
+      return { detected: true, trailingText: words.slice(index + 1).join(' ').trim() }
+    }
   }
-  return null
+  return { detected: false, trailingText: '' }
+}
+
+function stripWakeWord(value: string): string {
+  const normalized = normalizeSpeech(value).toLowerCase()
+  const words = normalized.split(' ').filter(Boolean)
+  for (let index = 0; index < Math.min(words.length, 3); index += 1) {
+    if (words[index] === 'hey' && index + 1 < words.length) {
+      const target = words[index + 1]
+      if (['nexus', 'nex', 'nx', 'nxx', 'nex us'].includes(target) || editDistance(target, 'nexus') <= 2) {
+        return words.slice(index + 2).join(' ').trim()
+      }
+    }
+    if (['nexus', 'nex', 'nx', 'nxx'].includes(words[index]) || editDistance(words[index], 'nexus') <= 1) {
+      return words.slice(index + 1).join(' ').trim()
+    }
+  }
+  return value.trim()
 }
 
 function meaningfulCommand(value: string): string {
@@ -137,7 +153,8 @@ function isMeaningfulCommand(value: string): boolean {
 export function useNexus() {
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [micEnabled, setMicEnabled] = useState(false)
-  const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+  const [isStartingMic, setIsStartingMic] = useState(false)
+  const [voiceState, setVoiceState] = useState<VoiceState>('mic_disabled')
   const [liveTranscript, setLiveTranscript] = useState('')
   const [spokenResponse, setSpokenResponse] = useState('')
   const [events, setEvents] = useState<NexusEvent[]>([])
@@ -145,23 +162,29 @@ export function useNexus() {
   const [latencyMs, setLatencyMs] = useState(0)
   const [lastCommunication, setLastCommunication] = useState(0)
   const [voiceError, setVoiceError] = useState('')
+  const [rawTranscript, setRawTranscript] = useState('')
+  
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const listeningRef = useRef(false)
   const speakingRef = useRef(false)
   const armedRef = useRef(false)
+  const isUserSpeakingRef = useRef(false)
+  const speechBufferRef = useRef('')
+  const sessionFinalRef = useRef('')
+  const isSendingRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const speechPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const interruptionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const responseRef = useRef('')
   const resumeOffsetRef = useRef(0)
   const interruptionCommandRef = useRef(false)
   const recognitionRestartRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const ignoreRecognitionUntilRef = useRef(0)
   const fishAudioRef = useRef<HTMLAudioElement | null>(null)
-  const wakeOnlyUntilRef = useRef(0)
   const recognitionStartingRef = useRef(false)
   const recognitionRestartAttemptsRef = useRef(0)
   const recognitionTextRef = useRef('')
+  const notAllowedRetryRef = useRef(0)
 
   const addInteraction = useCallback((role: Interaction['role'], text: string) => {
     setInteractions((current) => [...current, { id: `${Date.now()}-${role}`, role, text, timestamp: Date.now() }].slice(-MAX_INTERACTIONS))
@@ -181,21 +204,6 @@ export function useNexus() {
       setConnection('error')
     }
   }, [])
-
-  const resetActiveListeningTimeout = useCallback(() => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
-    silenceTimerRef.current = setTimeout(() => {
-      armedRef.current = false
-      setLiveTranscript('')
-      if (listeningRef.current && !speakingRef.current) setVoiceState('idle')
-    }, ACTIVE_LISTENING_TIMEOUT_MS)
-  }, [])
-
-  const armForCommand = useCallback(() => {
-    armedRef.current = true
-    setVoiceState('listening')
-    resetActiveListeningTimeout()
-  }, [resetActiveListeningTimeout])
 
   const speakBrowser = useCallback((text: string, offset = 0) => {
     if (!text) return
@@ -223,10 +231,8 @@ export function useNexus() {
       speakingRef.current = false
       resumeOffsetRef.current = 0
       setSpokenResponse('')
-      ignoreRecognitionUntilRef.current = Date.now() + POST_TTS_IGNORE_MS
-      wakeOnlyUntilRef.current = Date.now() + WAKE_ONLY_AFTER_TTS_MS
       if (listeningRef.current) {
-        window.setTimeout(() => armForCommand(), TTS_RESTART_DELAY_MS)
+        setVoiceState('idle')
       }
     }
     utterance.onerror = () => {
@@ -236,7 +242,7 @@ export function useNexus() {
       setVoiceState('error')
     }
     window.speechSynthesis.speak(utterance)
-  }, [armForCommand])
+  }, [])
 
   const speak = useCallback(async (text: string, offset = 0) => {
     if (!text) return
@@ -266,7 +272,7 @@ export function useNexus() {
       audio.onended = () => {
         speakingRef.current = false
         setSpokenResponse('')
-        if (listeningRef.current) armForCommand()
+        if (listeningRef.current) setVoiceState('idle')
         URL.revokeObjectURL(audio.src)
       }
       audio.onerror = () => {
@@ -279,11 +285,12 @@ export function useNexus() {
     } catch {
       speakBrowser(text, offset)
     }
-  }, [armForCommand, speakBrowser])
+  }, [speakBrowser])
 
   const sendText = useCallback(async (text: string) => {
     const clean = text.trim()
     if (!clean) return
+    isSendingRef.current = true
     setVoiceState('processing')
     addInteraction('user', clean)
     const started = performance.now()
@@ -300,166 +307,326 @@ export function useNexus() {
       setLastCommunication(Date.now())
       armedRef.current = false
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
-      if (textResponse) { addInteraction('nexus', textResponse); speak(textResponse) }
-      else if (listeningRef.current) setVoiceState('idle')
+      if (textResponse) {
+        addInteraction('nexus', textResponse)
+        void speak(textResponse)
+      } else if (listeningRef.current) {
+        setVoiceState('idle')
+      }
       await refresh()
     } catch {
       setConnection('error')
-      setVoiceState('error')
+      if (listeningRef.current) setVoiceState('idle')
+    } finally {
+      isSendingRef.current = false
     }
   }, [addInteraction, refresh, speak])
+
+  const commitCommand = useCallback(() => {
+    if (speechPauseTimerRef.current) {
+      clearTimeout(speechPauseTimerRef.current)
+      speechPauseTimerRef.current = null
+    }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+
+    if (isSendingRef.current) return
+
+    const candidate = speechBufferRef.current.trim()
+    const clean = meaningfulCommand(candidate)
+
+    armedRef.current = false
+    isUserSpeakingRef.current = false
+    speechBufferRef.current = ''
+    sessionFinalRef.current = ''
+    recognitionTextRef.current = ''
+
+    if (isMeaningfulCommand(clean)) {
+      setLiveTranscript(clean)
+      void sendText(clean)
+    } else {
+      setLiveTranscript('')
+      if (listeningRef.current) {
+        setVoiceState('idle')
+      }
+    }
+  }, [sendText])
+
+  const resetSpeechPauseTimer = useCallback(() => {
+    if (speechPauseTimerRef.current) {
+      clearTimeout(speechPauseTimerRef.current)
+      speechPauseTimerRef.current = null
+    }
+    speechPauseTimerRef.current = setTimeout(() => {
+      commitCommand()
+    }, SPEECH_PAUSE_TIMEOUT_MS)
+  }, [commitCommand])
+
+  const activateListening = useCallback((initialText = '') => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
+    if (speechPauseTimerRef.current) {
+      clearTimeout(speechPauseTimerRef.current)
+      speechPauseTimerRef.current = null
+    }
+
+    armedRef.current = true
+    isSendingRef.current = false
+    sessionFinalRef.current = ''
+    speechBufferRef.current = ''
+
+    const cleanInitial = meaningfulCommand(initialText)
+
+    if (isMeaningfulCommand(cleanInitial)) {
+      isUserSpeakingRef.current = true
+      sessionFinalRef.current = cleanInitial
+      speechBufferRef.current = cleanInitial
+      setLiveTranscript(cleanInitial)
+      setVoiceState('user_speaking')
+      resetSpeechPauseTimer()
+    } else {
+      isUserSpeakingRef.current = false
+      setLiveTranscript('Listening…')
+      setVoiceState('listening')
+      silenceTimerRef.current = setTimeout(() => {
+        if (armedRef.current && !isUserSpeakingRef.current) {
+          armedRef.current = false
+          setLiveTranscript('')
+          recognitionTextRef.current = ''
+          if (listeningRef.current) {
+            setVoiceState('idle')
+          }
+        }
+      }, WAKE_SILENCE_TIMEOUT_MS)
+    }
+  }, [resetSpeechPauseTimer])
+
+  const startRecognitionSession = useCallback(() => {
+    if (!listeningRef.current) return
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onresult = null
+        recognitionRef.current.onerror = null
+        recognitionRef.current.onend = null
+        recognitionRef.current.stop()
+      } catch {}
+      recognitionRef.current = null
+    }
+
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!Recognition) return
+
+    const recognition = new Recognition()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = navigator.language?.startsWith('en') ? navigator.language : 'en-US'
+
+    recognition.onresult = (event) => {
+      notAllowedRetryRef.current = 0
+      let interim = ''
+      let finalText = ''
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const text = event.results[index][0].transcript
+        if (event.results[index].isFinal) finalText += text
+        else interim += text
+      }
+
+      const transcript = `${finalText} ${interim}`.trim()
+      if (transcript) {
+        setRawTranscript(transcript)
+      }
+
+      // If Nexus is speaking and user speaks, interrupt playback
+      if (speakingRef.current && transcript) {
+        window.speechSynthesis?.cancel()
+        fishAudioRef.current?.pause()
+        speakingRef.current = false
+        setVoiceState('interruption')
+      }
+
+      // 1. STANDBY MODE (listening for wake word)
+      if (!armedRef.current) {
+        const accumulated = `${recognitionTextRef.current} ${transcript}`.trim()
+        const wake = extractWakeWord(accumulated)
+
+        if (wake.detected) {
+          recognitionTextRef.current = ''
+          activateListening(wake.trailingText)
+          return
+        }
+
+        const wakeDirect = extractWakeWord(transcript)
+        if (wakeDirect.detected) {
+          recognitionTextRef.current = ''
+          activateListening(wakeDirect.trailingText)
+          return
+        }
+
+        if (finalText.trim()) {
+          recognitionTextRef.current = `${recognitionTextRef.current} ${finalText}`.trim().slice(-100)
+        }
+        return
+      }
+
+      // 2. ARMED / LISTENING MODE (capturing user command)
+      // Cancel 5-second silence timer because speech is actively arriving
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current)
+        silenceTimerRef.current = null
+      }
+
+      // Accumulate finalized text into sessionFinalRef
+      if (finalText.trim()) {
+        const cleanFinal = stripWakeWord(finalText)
+        if (cleanFinal) {
+          sessionFinalRef.current = `${sessionFinalRef.current} ${cleanFinal}`.trim()
+        }
+      }
+
+      const cleanInterim = stripWakeWord(interim)
+      const currentFullText = `${sessionFinalRef.current} ${cleanInterim}`.trim()
+
+      if (currentFullText) {
+        isUserSpeakingRef.current = true
+        speechBufferRef.current = currentFullText
+        setLiveTranscript(currentFullText)
+        setVoiceState('user_speaking')
+        resetSpeechPauseTimer()
+      }
+    }
+
+    recognition.onerror = (event) => {
+      const code = event.error || 'unknown'
+      if (code === 'no-speech' || code === 'aborted') return
+      if (code === 'network') {
+        setVoiceError('The browser speech service is unavailable. Check your connection or browser settings.')
+        if (listeningRef.current && !armedRef.current) setVoiceState('idle')
+        return
+      }
+
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        if (listeningRef.current && notAllowedRetryRef.current < 3) {
+          notAllowedRetryRef.current += 1
+          console.warn(`Speech recognition not-allowed on restart, retrying (${notAllowedRetryRef.current}/3)`)
+          if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
+          recognitionRestartRef.current = setTimeout(() => {
+            if (listeningRef.current) startRecognitionSession()
+          }, 600)
+          return
+        }
+
+        listeningRef.current = false
+        setMicEnabled(false)
+        streamRef.current?.getTracks().forEach((track) => track.stop())
+        streamRef.current = null
+        setVoiceError('Microphone permission was denied. Please allow microphone access in your browser settings.')
+        setVoiceState('error')
+        return
+      }
+
+      setVoiceError(`Speech recognition error: ${code}`)
+      if (listeningRef.current) setVoiceState('error')
+    }
+
+    recognition.onend = () => {
+      if (!listeningRef.current) return
+
+      // If speech was in progress and recognition ended, commit the buffered command
+      if (armedRef.current && isUserSpeakingRef.current && speechBufferRef.current.trim()) {
+        commitCommand()
+      }
+
+      if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
+      recognitionRestartRef.current = setTimeout(() => {
+        if (listeningRef.current) startRecognitionSession()
+      }, RECOGNITION_RESTART_DELAY_MS)
+    }
+
+    recognitionRef.current = recognition
+    try {
+      recognition.start()
+    } catch (err) {
+      console.warn('Recognition start warning:', err)
+    }
+  }, [activateListening, commitCommand, resetSpeechPauseTimer])
 
   const toggleMic = useCallback(async () => {
     if (micEnabled) {
       listeningRef.current = false
       armedRef.current = false
+      isUserSpeakingRef.current = false
+      isSendingRef.current = false
+      speechBufferRef.current = ''
+      sessionFinalRef.current = ''
       setVoiceError('')
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
+      if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
-      recognitionRef.current?.stop()
+      try {
+        if (recognitionRef.current) {
+          recognitionRef.current.onresult = null
+          recognitionRef.current.onerror = null
+          recognitionRef.current.onend = null
+          recognitionRef.current.stop()
+        }
+      } catch {}
+      recognitionRef.current = null
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       setMicEnabled(false)
       setVoiceState('mic_disabled')
+      setLiveTranscript('')
       return
     }
+
+    setIsStartingMic(true)
     try {
       setVoiceError('')
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser does not provide microphone access. Use HTTPS or localhost and a supported browser.')
-      streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+      if (typeof window !== 'undefined' && !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        throw new Error('Microphone access requires HTTPS or localhost. If connecting from a tablet or phone, use Tailscale HTTPS or a secure tunnel.')
+      }
+
       const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (!Recognition) throw new Error('Speech recognition is not supported by this browser.')
-      const recognition = new Recognition()
-      recognition.continuous = true
-      recognition.interimResults = true
-      recognition.lang = navigator.language?.startsWith('en') ? navigator.language : 'en-US'
-      recognition.onresult = (event) => {
-        let interim = ''
-        let finalText = ''
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          const text = event.results[index][0].transcript
-          if (event.results[index].isFinal) finalText += text
-          else interim += text
-        }
-        const transcript = `${finalText} ${interim}`.trim()
-        if (finalText.trim()) {
-          recognitionTextRef.current = `${recognitionTextRef.current} ${finalText}`.trim().slice(-160)
-        }
-        const accumulatedTranscript = `${recognitionTextRef.current} ${interim}`.trim()
-        const command = wakeCommand(accumulatedTranscript)
-        if (command !== null) {
-          if (speakingRef.current) {
-            window.speechSynthesis.cancel()
-            fishAudioRef.current?.pause()
-            speakingRef.current = false
-            interruptionCommandRef.current = false
-            setVoiceState('interruption')
-            if (interruptionTimerRef.current) clearTimeout(interruptionTimerRef.current)
-            interruptionTimerRef.current = setTimeout(() => {
-              if (!interruptionCommandRef.current) speak(responseRef.current, resumeOffsetRef.current)
-            }, INTERRUPTION_GRACE_MS)
-          }
-          armForCommand()
-          const cleanCommand = meaningfulCommand(command)
-          recognitionTextRef.current = ''
-          setLiveTranscript(cleanCommand || 'Hey Nexus')
-          if (cleanCommand) setVoiceState('user_speaking')
-          if (finalText.trim() && isMeaningfulCommand(cleanCommand)) {
-            if (interruptionTimerRef.current) clearTimeout(interruptionTimerRef.current)
-            interruptionCommandRef.current = true
-            setLiveTranscript('')
-            void sendText(cleanCommand)
-          }
-          return
-        }
-        if (Date.now() < ignoreRecognitionUntilRef.current) return
-        if (!armedRef.current) return
-        resetActiveListeningTimeout()
-        setLiveTranscript(transcript)
-        if (transcript) setVoiceState('user_speaking')
-        if (finalText.trim()) {
-          const cleanCommand = meaningfulCommand(finalText)
-          setLiveTranscript('')
-          if (normalizeSpeech(cleanCommand) === 'nexus' || normalizeSpeech(cleanCommand) === 'nex us') {
-            recognitionTextRef.current = ''
-            setVoiceState('listening')
-            return
-          }
-          if (Date.now() < wakeOnlyUntilRef.current) {
-            recognitionTextRef.current = ''
-            setVoiceState('listening')
-            return
-          }
-          if (isMeaningfulCommand(cleanCommand)) {
-            interruptionCommandRef.current = true
-            recognitionTextRef.current = ''
-            void sendText(cleanCommand)
-          } else {
-            setVoiceState('listening')
-          }
-        }
+      if (!Recognition) throw new Error('Speech recognition is not supported by this browser. Please use Chrome, Edge, or Safari.')
+
+      // KEEP the media stream active while mic is enabled to maintain persistent audio capture permission
+      if (navigator.mediaDevices?.getUserMedia) {
+        streamRef.current = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true }
+        })
       }
-      recognition.onerror = (event) => {
-        const code = event.error || 'unknown'
-        if (code === 'no-speech' || code === 'aborted') return
-        if (code === 'network') {
-          setVoiceError('The current browser speech service is unavailable. Open this client in Chrome or Edge, then allow microphone access.')
-          if (listeningRef.current) setVoiceState('idle')
-          return
-        }
-        const message = code === 'not-allowed'
-          ? 'Microphone or speech-recognition permission was denied. Allow microphone access in the browser and try again.'
-          : `Speech recognition error: ${code}.`
-        setVoiceError(message)
-        if (code === 'not-allowed' || code === 'service-not-allowed') {
-          listeningRef.current = false
-          setMicEnabled(false)
-          streamRef.current?.getTracks().forEach((track) => track.stop())
-          streamRef.current = null
-        }
-        if (listeningRef.current) setVoiceState('error')
-      }
-      recognition.onend = () => {
-        if (!listeningRef.current) return
-        if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
-        const restart = (attempt: number) => {
-          if (!listeningRef.current || attempt > MAX_RECOGNITION_RESTART_ATTEMPTS) {
-            setVoiceError('Speech recognition stopped. Tap MIC OFF, then MIC ON to restart voice listening.')
-            setVoiceState('error')
-            return
-          }
-          recognitionRestartRef.current = setTimeout(() => {
-            if (recognitionStartingRef.current || !listeningRef.current) return
-            recognitionRestartAttemptsRef.current = attempt
-            recognitionStartingRef.current = true
-            try {
-              recognition.start()
-              recognitionStartingRef.current = false
-              recognitionRestartAttemptsRef.current = 0
-            } catch {
-              recognitionStartingRef.current = false
-              restart(attempt + 1)
-            }
-          }, RECOGNITION_RESTART_DELAY_MS * Math.max(1, attempt))
-        }
-        restart(recognitionRestartAttemptsRef.current + 1)
-      }
-      recognitionRef.current = recognition
+
       listeningRef.current = true
-      recognitionRestartAttemptsRef.current = 0
+      armedRef.current = false
+      isUserSpeakingRef.current = false
+      isSendingRef.current = false
+      speechBufferRef.current = ''
+      sessionFinalRef.current = ''
+      notAllowedRetryRef.current = 0
       recognitionTextRef.current = ''
+      setRawTranscript('')
+      setLiveTranscript('')
       setMicEnabled(true)
       setVoiceState('idle')
-      recognitionStartingRef.current = true
-      recognition.start()
-      recognitionStartingRef.current = false
+
+      startRecognitionSession()
     } catch (error) {
+      console.error('MIC START FAILED:', error)
       streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
       setVoiceError(error instanceof Error ? error.message : 'Microphone setup failed.')
       setVoiceState('error')
       setMicEnabled(false)
+      listeningRef.current = false
+    } finally {
+      setIsStartingMic(false)
     }
-  }, [armForCommand, micEnabled, resetActiveListeningTimeout, sendText, speak])
+  }, [micEnabled, startRecognitionSession])
 
   const stopSpeaking = useCallback(() => {
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
@@ -467,7 +634,7 @@ export function useNexus() {
     speakingRef.current = false
     resumeOffsetRef.current = 0
     setSpokenResponse('')
-    if (listeningRef.current) setVoiceState(armedRef.current ? 'listening' : 'idle')
+    if (listeningRef.current) setVoiceState('idle')
   }, [])
 
   const retry = useCallback(() => { setConnection('retrying'); void refresh() }, [refresh])
@@ -477,17 +644,33 @@ export function useNexus() {
     const interval = window.setInterval(() => void refresh(), 2000)
     return () => {
       window.clearInterval(interval)
-      recognitionRef.current?.stop()
-      recognitionTextRef.current = ''
+      listeningRef.current = false
+      armedRef.current = false
+      isUserSpeakingRef.current = false
+      isSendingRef.current = false
+      speechBufferRef.current = ''
+      sessionFinalRef.current = ''
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
-      streamRef.current?.getTracks().forEach((track) => track.stop())
-      window.speechSynthesis?.cancel()
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
+      if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
       if (interruptionTimerRef.current) clearTimeout(interruptionTimerRef.current)
+      try {
+        if (recognitionRef.current) {
+          recognitionRef.current.onresult = null
+          recognitionRef.current.onerror = null
+          recognitionRef.current.onend = null
+          recognitionRef.current.stop()
+        }
+      } catch {}
+      recognitionRef.current = null
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      window.speechSynthesis?.cancel()
+      fishAudioRef.current?.pause()
     }
   }, [refresh])
 
-  return { connection, micEnabled, voiceState, voiceError, liveTranscript, spokenResponse, events, interactions, latencyMs, lastCommunication, toggleMic, retry, stopSpeaking, triggerInterruption: stopSpeaking, sendText }
+  return { connection, micEnabled, isStartingMic, voiceState, voiceError, liveTranscript, spokenResponse, events, interactions, latencyMs, lastCommunication, rawTranscript, toggleMic, retry, stopSpeaking, triggerInterruption: stopSpeaking, sendText }
 }
 
 export type NexusClient = ReturnType<typeof useNexus>

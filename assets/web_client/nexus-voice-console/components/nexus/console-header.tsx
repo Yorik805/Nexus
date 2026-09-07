@@ -1,6 +1,6 @@
 'use client'
 
-import { Mic, MicOff, RotateCw } from 'lucide-react'
+import { Loader2, Mic, MicOff, RotateCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ConnectionState, ConsoleMode } from '@/lib/nexus/types'
 import { ConnectionIndicator } from './connection-indicator'
@@ -8,6 +8,7 @@ import { ConnectionIndicator } from './connection-indicator'
 export function ConsoleHeader({
   connection,
   micEnabled,
+  isStartingMic,
   mode,
   onRetry,
   onToggleMic,
@@ -15,6 +16,7 @@ export function ConsoleHeader({
 }: {
   connection: ConnectionState
   micEnabled: boolean
+  isStartingMic?: boolean
   mode: ConsoleMode
   onRetry: () => void
   onToggleMic: () => void
@@ -50,7 +52,7 @@ export function ConsoleHeader({
         <button
           type="button"
           onClick={onRetry}
-          className="flex items-center gap-2 rounded-md border border-border bg-background/50 px-3 py-2 font-mono text-xs tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+          className="flex items-center gap-2 rounded-md border border-border bg-background/50 px-3 py-2 font-mono text-xs tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground cursor-pointer active:scale-95 select-none"
         >
           <RotateCw className={cn('size-3.5', retrying && 'animate-nexus-spin')} />
           <span className="hidden md:inline">RETRY</span>
@@ -60,15 +62,27 @@ export function ConsoleHeader({
           type="button"
           onClick={onToggleMic}
           aria-pressed={micEnabled}
+          disabled={isStartingMic}
+          aria-label={isStartingMic ? 'Starting microphone' : micEnabled ? 'Mute microphone' : 'Enable microphone'}
+          title={isStartingMic ? 'Starting microphone…' : micEnabled ? 'Click to turn mic off' : 'Click to turn mic on'}
           className={cn(
-            'flex items-center gap-2 rounded-md border px-3 py-2 font-mono text-xs tracking-wide transition-colors',
+            'flex items-center gap-2 rounded-md border px-3 py-2 font-mono text-xs tracking-wide transition-all cursor-pointer active:scale-95 select-none',
             micEnabled
-              ? 'border-primary/40 bg-primary/15 text-primary'
-              : 'border-border bg-background/50 text-muted-foreground hover:text-foreground',
+              ? 'border-primary/50 bg-primary/20 text-primary shadow-[0_0_12px_rgba(var(--primary-rgb),0.25)]'
+              : 'border-border bg-background/50 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+            isStartingMic && 'opacity-80 cursor-wait animate-pulse',
           )}
         >
-          {micEnabled ? <Mic className="size-3.5" /> : <MicOff className="size-3.5" />}
-          <span className="hidden md:inline">{micEnabled ? 'MIC ON' : 'MIC OFF'}</span>
+          {isStartingMic ? (
+            <Loader2 className="size-3.5 animate-spin text-primary" />
+          ) : micEnabled ? (
+            <Mic className="size-3.5 text-primary" />
+          ) : (
+            <MicOff className="size-3.5" />
+          )}
+          <span className="inline-block font-medium">
+            {isStartingMic ? 'STARTING…' : micEnabled ? 'MIC ON' : 'MIC OFF'}
+          </span>
         </button>
       </div>
     </header>

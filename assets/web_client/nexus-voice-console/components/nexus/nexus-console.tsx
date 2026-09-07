@@ -23,20 +23,20 @@ export function NexusConsole() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background text-foreground lg:h-dvh lg:overflow-hidden">
+    <div className='flex min-h-dvh flex-col bg-background text-foreground lg:h-dvh lg:overflow-hidden'>
       <ConsoleHeader
         connection={nexus.connection}
         micEnabled={nexus.micEnabled}
+        isStartingMic={nexus.isStartingMic}
         mode={mode}
         onRetry={nexus.retry}
         onToggleMic={nexus.toggleMic}
         onModeChange={setMode}
       />
 
-      <main className="flex flex-1 flex-col lg:min-h-0 lg:flex-row">
-        {/* Primary column: voice interface */}
-        <div className="flex flex-col lg:min-h-0 lg:flex-1">
-          <div className="bg-console-grid flex min-h-[58vh] items-center justify-center lg:min-h-0 lg:flex-1">
+      <main className='flex flex-1 flex-col lg:min-h-0 lg:flex-row'>
+        <div className='flex flex-col lg:min-h-0 lg:flex-1'>
+          <div className='bg-console-grid flex min-h-[58vh] items-center justify-center lg:min-h-0 lg:flex-1'>
             <VoiceInterface
               voiceState={nexus.voiceState}
               errorMessage={nexus.voiceError}
@@ -44,16 +44,18 @@ export function NexusConsole() {
               spokenResponse={nexus.spokenResponse}
               onStopSpeaking={nexus.stopSpeaking}
               onInterrupt={nexus.triggerInterruption}
+              onToggleMic={nexus.toggleMic}
+              micEnabled={nexus.micEnabled}
+              isStartingMic={nexus.isStartingMic}
             />
           </div>
           <InteractionHistory interactions={nexus.interactions} />
         </div>
 
-        {/* Sidebar: status + monitor */}
-        <aside className="flex min-h-0 w-full flex-col overflow-y-auto border-t border-border bg-card/20 lg:w-[360px] lg:border-l lg:border-t-0">
+        <aside className='flex min-h-0 w-full flex-col overflow-y-auto border-t border-border bg-card/20 lg:w-[360px] lg:border-l lg:border-t-0'>
           <ConnectionStatus status={status} />
-          {mode === 'debug' && <DebugFlow events={nexus.events} />}
-          <div className="min-h-80 flex-1">
+          {mode === 'debug' && <DebugFlow events={nexus.events} rawTranscript={nexus.rawTranscript} />}
+          <div className='min-h-80 flex-1'>
             <EventMonitor events={nexus.events} />
           </div>
         </aside>

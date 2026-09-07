@@ -1,14 +1,10 @@
 import type { NexusEvent } from '@/lib/nexus/types'
 
-/** Mirrors the event table in the original Nexus dashboard using live API data. */
-export function DebugFlow({ events }: { events: NexusEvent[] }) {
+export function DebugFlow({ events, rawTranscript }: { events: NexusEvent[]; rawTranscript: string }) {
   const visible = events.slice().reverse()
 
   return (
-    <section
-      aria-label="Live Nexus events"
-      className="border-b border-border px-4 py-3"
-    >
+    <section aria-label="Live Nexus events" className="border-b border-border px-4 py-3">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-mono text-[10px] font-semibold tracking-[0.25em] text-foreground">
           LIVE EVENT STREAM
@@ -41,6 +37,14 @@ export function DebugFlow({ events }: { events: NexusEvent[] }) {
             ))
           )}
         </div>
+      </div>
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="mb-3 font-mono text-[10px] font-semibold tracking-[0.25em] text-foreground">
+          RAW STT OUTPUT
+        </h3>
+        <pre className="max-h-48 overflow-y-auto font-mono text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
+          {rawTranscript || 'Waiting for speech recognition...'}
+        </pre>
       </div>
     </section>
   )
