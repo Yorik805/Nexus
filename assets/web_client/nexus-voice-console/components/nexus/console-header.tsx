@@ -2,7 +2,7 @@
 
 import { Loader2, Mic, MicOff, RotateCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ConnectionState, ConsoleMode } from '@/lib/nexus/types'
+import type { ConnectionState, ConsoleMode, SttMode } from '@/lib/nexus/types'
 import { ConnectionIndicator } from './connection-indicator'
 
 export function ConsoleHeader({
@@ -10,17 +10,21 @@ export function ConsoleHeader({
   micEnabled,
   isStartingMic,
   mode,
+  sttMode = 'web',
   onRetry,
   onToggleMic,
   onModeChange,
+  onToggleSttMode,
 }: {
   connection: ConnectionState
   micEnabled: boolean
   isStartingMic?: boolean
   mode: ConsoleMode
+  sttMode?: SttMode
   onRetry: () => void
   onToggleMic: () => void
   onModeChange: (mode: ConsoleMode) => void
+  onToggleSttMode?: () => void
 }) {
   const retrying = connection === 'retrying' || connection === 'connecting'
   return (
@@ -48,6 +52,27 @@ export function ConsoleHeader({
         <div className="hidden rounded-md border border-border bg-background/50 px-3 py-2 sm:block">
           <ConnectionIndicator state={connection} />
         </div>
+
+        {onToggleSttMode && (
+          <button
+            type="button"
+            onClick={onToggleSttMode}
+            title={
+              sttMode === 'server'
+                ? 'Server STT (Whisper) active. Click to switch to Web STT.'
+                : 'Browser Web STT active. Click to switch to Server Whisper STT.'
+            }
+            className={cn(
+              'hidden sm:flex items-center gap-1.5 rounded-md border px-3 py-2 font-mono text-xs tracking-wide transition-colors cursor-pointer select-none active:scale-95',
+              sttMode === 'server'
+                ? 'border-primary/50 bg-primary/10 text-primary'
+                : 'border-border bg-background/50 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+            )}
+          >
+            <span className="text-[10px] text-muted-foreground">STT:</span>
+            <span className="font-semibold">{sttMode === 'server' ? 'SERVER' : 'WEB'}</span>
+          </button>
+        )}
 
         <button
           type="button"

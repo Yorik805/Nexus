@@ -11,7 +11,7 @@ import {
   Volume2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { VoiceState } from '@/lib/nexus/types'
+import type { SttMode, VoiceState } from '@/lib/nexus/types'
 import { Waveform } from './waveform'
 
 interface StateConfig {
@@ -42,6 +42,8 @@ export function VoiceInterface({
   onToggleMic,
   micEnabled,
   isStartingMic,
+  sttMode = 'web',
+  onToggleSttMode,
 }: {
   voiceState: VoiceState
   errorMessage?: string
@@ -52,6 +54,8 @@ export function VoiceInterface({
   onToggleMic?: () => void
   micEnabled?: boolean
   isStartingMic?: boolean
+  sttMode?: SttMode
+  onToggleSttMode?: () => void
 }) {
   const cfg = STATE_CONFIG[voiceState]
   const isListening = voiceState === 'listening'
@@ -66,16 +70,16 @@ export function VoiceInterface({
   return (
     <section
       aria-label="Voice interface"
-      className="flex h-full w-full flex-col items-center justify-center gap-8 px-6 py-8"
+      className="flex h-full w-full flex-col items-center justify-center gap-4 px-6 py-5 select-none"
     >
-      {/* Central visualization */}
-      <div className="relative flex size-56 items-center justify-center md:size-64">
+      {/* Central visualization - scaled to moderate proportion */}
+      <div className="relative flex size-32 items-center justify-center md:size-36">
         {/* Pulse rings — active listening */}
         {(isListening || isInterruption) && (
           <>
-            <span className={cn('absolute size-40 rounded-full border animate-nexus-ring', ringColor(cfg.accent))} />
+            <span className={cn('absolute size-24 rounded-full border animate-nexus-ring', ringColor(cfg.accent))} />
             <span
-              className={cn('absolute size-40 rounded-full border animate-nexus-ring', ringColor(cfg.accent))}
+              className={cn('absolute size-24 rounded-full border animate-nexus-ring', ringColor(cfg.accent))}
               style={{ animationDelay: '1.2s' }}
             />
           </>
@@ -85,13 +89,13 @@ export function VoiceInterface({
         {isProcessing && (
           <span
             className={cn(
-              'absolute size-52 rounded-full border-2 border-transparent animate-nexus-spin md:size-60',
+              'absolute size-28 rounded-full border-2 border-transparent animate-nexus-spin md:size-32',
               'border-t-cat-validator border-r-cat-validator/40',
             )}
           />
         )}
 
-        {/* Core disc - now interactive and clickable */}
+        {/* Core disc - interactive moderate circle */}
         <button
           type="button"
           onClick={onToggleMic}
@@ -111,7 +115,7 @@ export function VoiceInterface({
               : 'Click to turn mic on'
           }
           className={cn(
-            'group relative flex size-40 items-center justify-center rounded-full ring-1 transition-all md:size-44 select-none',
+            'group relative flex size-20 items-center justify-center rounded-full ring-1 transition-all md:size-24 select-none',
             'cursor-pointer hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
             discClasses(cfg.accent, isListening || isNexusSpeaking),
             isStartingMic && 'animate-pulse ring-primary/60 cursor-wait',
@@ -120,7 +124,7 @@ export function VoiceInterface({
           <StateIcon
             voiceState={voiceState}
             isStartingMic={isStartingMic}
-            className={cn('size-16 md:size-20 transition-transform group-hover:scale-105', textColor(cfg.accent))}
+            className={cn('size-8 md:size-9 transition-transform group-hover:scale-105', textColor(cfg.accent))}
           />
         </button>
       </div>
@@ -129,28 +133,28 @@ export function VoiceInterface({
       <div className="text-center">
         <h2
           className={cn(
-            'font-mono text-xl font-semibold tracking-[0.2em] md:text-2xl',
+            'font-mono text-xs font-semibold tracking-[0.25em] md:text-sm',
             textColor(cfg.accent),
           )}
         >
           {cfg.title}
         </h2>
-        <p className="mt-2 font-mono text-xs tracking-wide text-muted-foreground">
+        <p className="mt-1 font-mono text-[11px] tracking-wide text-muted-foreground">
           {cfg.subtitle}
         </p>
       </div>
 
       {/* Dynamic content region */}
-      <div className="flex min-h-24 w-full max-w-xl flex-col items-center justify-center gap-4">
+      <div className="flex min-h-16 w-full max-w-md flex-col items-center justify-center gap-3">
         {(isUserSpeaking || (isListening && hasTranscript)) && (
           <>
-            <Waveform active bars={32} colorClass="bg-primary" />
-            <p className="text-pretty text-center text-lg text-foreground">
+            <Waveform active bars={24} colorClass="bg-primary" />
+            <p className="text-pretty text-center text-xs md:text-sm text-foreground leading-relaxed">
               {liveTranscript ? (
                 <>
                   <span className="text-muted-foreground">“</span>
                   {liveTranscript}
-                  <span className="ml-0.5 inline-block h-5 w-[2px] translate-y-1 bg-primary animate-nexus-caret" />
+                  <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 bg-primary animate-nexus-caret" />
                 </>
               ) : (
                 <span className="text-muted-foreground">Listening for speech…</span>
@@ -161,22 +165,22 @@ export function VoiceInterface({
 
         {isNexusSpeaking && (
           <>
-            <Waveform active bars={32} colorClass="bg-cat-event" />
-            <p className="text-pretty text-center text-lg text-foreground">
+            <Waveform active bars={24} colorClass="bg-cat-event" />
+            <p className="text-pretty text-center text-xs md:text-sm text-foreground leading-relaxed">
               {spokenResponse}
             </p>
             <button
               type="button"
               onClick={onStopSpeaking}
-              className="flex items-center gap-2 rounded-md border border-cat-error/40 bg-cat-error/10 px-4 py-2 font-mono text-xs tracking-widest text-cat-error transition-colors hover:bg-cat-error/20 cursor-pointer active:scale-95"
+              className="flex items-center gap-1.5 rounded-md border border-cat-error/40 bg-cat-error/10 px-3 py-1.5 font-mono text-[11px] tracking-widest text-cat-error transition-colors hover:bg-cat-error/20 cursor-pointer active:scale-95"
             >
-              <Square className="size-3.5 fill-current" />
+              <Square className="size-3 fill-current" />
               STOP SPEAKING
             </button>
-            <div className="mt-1 flex items-center gap-2 font-mono text-[10px] tracking-widest text-primary">
-              <span className="relative flex size-2">
+            <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[9px] tracking-widest text-primary">
+              <span className="relative flex size-1.5">
                 <span className="absolute inline-flex size-full rounded-full bg-primary/60 animate-nexus-ring" />
-                <span className="relative inline-flex size-2 rounded-full bg-primary" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
               </span>
               MIC LIVE — SAY “HEY NEXUS” TO INTERRUPT
             </div>
@@ -188,7 +192,7 @@ export function VoiceInterface({
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
-                className="size-2.5 rounded-full bg-cat-validator animate-nexus-breathe"
+                className="size-2 rounded-full bg-cat-validator animate-nexus-breathe"
                 style={{ animationDelay: `${i * 0.2}s` }}
               />
             ))}
@@ -196,27 +200,27 @@ export function VoiceInterface({
         )}
 
         {isInterruption && (
-          <p className="text-pretty text-center text-sm text-cat-validator">
+          <p className="text-pretty text-center text-xs text-cat-validator">
             User interrupted while Nexus was speaking. Playback halted; microphone re-engaged.
           </p>
         )}
 
         {isMuted && (
-          <div className="flex flex-col items-center gap-3">
-            <p className="text-pretty text-center text-sm text-muted-foreground">
-              The microphone is off. Voice capture and continuous listening are paused.
+          <div className="flex flex-col items-center gap-2.5">
+            <p className="text-pretty text-center text-xs text-muted-foreground">
+              Microphone is off. Continuous listening is paused.
             </p>
             {onToggleMic && (
               <button
                 type="button"
                 onClick={onToggleMic}
                 disabled={isStartingMic}
-                className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/20 px-5 py-2.5 font-mono text-xs font-semibold tracking-widest text-primary transition-all hover:bg-primary/30 active:scale-95 cursor-pointer shadow-[0_0_16px_rgba(var(--primary-rgb),0.25)]"
+                className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/20 px-4 py-2 font-mono text-xs font-semibold tracking-widest text-primary transition-all hover:bg-primary/30 active:scale-95 cursor-pointer shadow-[0_0_12px_rgba(var(--primary-rgb),0.25)]"
               >
                 {isStartingMic ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <Mic className="size-4" />
+                  <Mic className="size-3.5" />
                 )}
                 {isStartingMic ? 'STARTING MIC…' : 'TURN MIC ON'}
               </button>
@@ -225,8 +229,8 @@ export function VoiceInterface({
         )}
 
         {isError && (
-          <div className="flex flex-col items-center gap-3">
-            <p className="text-pretty text-center text-sm text-cat-error">
+          <div className="flex flex-col items-center gap-2.5">
+            <p className="text-pretty text-center text-xs text-cat-error">
               {errorMessage || 'Unable to start voice capture. Check microphone permissions and try again.'}
             </p>
             {onToggleMic && (
@@ -234,16 +238,47 @@ export function VoiceInterface({
                 type="button"
                 onClick={onToggleMic}
                 disabled={isStartingMic}
-                className="flex items-center gap-2 rounded-md border border-cat-error/50 bg-cat-error/20 px-5 py-2.5 font-mono text-xs font-semibold tracking-widest text-cat-error transition-all hover:bg-cat-error/30 active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 rounded-md border border-cat-error/50 bg-cat-error/20 px-4 py-2 font-mono text-xs font-semibold tracking-widest text-cat-error transition-all hover:bg-cat-error/30 active:scale-95 cursor-pointer"
               >
                 {isStartingMic ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  <RotateCw className="size-4" />
+                  <RotateCw className="size-3.5" />
                 )}
                 {isStartingMic ? 'STARTING MIC…' : 'RETRY MICROPHONE'}
               </button>
             )}
+          </div>
+        )}
+
+        {/* STT Engine toggle switch */}
+        {onToggleSttMode && (
+          <div className="mt-1 flex items-center gap-1.5 rounded-full border border-border/60 bg-card/40 p-1 font-mono text-[10px]">
+            <span className="px-2 text-muted-foreground/70 tracking-wider">STT:</span>
+            <button
+              type="button"
+              onClick={sttMode !== 'web' ? onToggleSttMode : undefined}
+              className={cn(
+                'rounded-full px-2.5 py-0.5 transition-all cursor-pointer',
+                sttMode === 'web'
+                  ? 'bg-primary/25 text-primary font-semibold shadow-[0_0_8px_rgba(var(--primary-rgb),0.2)]'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              WEB
+            </button>
+            <button
+              type="button"
+              onClick={sttMode !== 'server' ? onToggleSttMode : undefined}
+              className={cn(
+                'rounded-full px-2.5 py-0.5 transition-all cursor-pointer',
+                sttMode === 'server'
+                  ? 'bg-primary/25 text-primary font-semibold shadow-[0_0_8px_rgba(var(--primary-rgb),0.2)]'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              SERVER (WHISPER)
+            </button>
           </div>
         )}
       </div>

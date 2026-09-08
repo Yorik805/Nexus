@@ -31,6 +31,9 @@ export type VoiceState =
   | 'mic_disabled'
   | 'error'
 
+/** Speech-to-text engine mode: browser Web Speech API vs server-side Whisper. */
+export type SttMode = 'web' | 'server'
+
 /** Category of a Nexus runtime event, used for color coding + filtering. */
 export type EventCategory =
   | 'event'

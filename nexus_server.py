@@ -128,6 +128,45 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         print(f"[NEXUS:http] {self.command} {self.path} from {self.address_string()}")
         try:
+            if self.path == "/stt":
+                content_type = self.headers.get("Content-Type", "")
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0:
+                    self._write_json(400, {"status": "ERROR", "message": "No audio payload provided."})
+                    return
+
+                raw_data = self.rfile.read(length)
+                import tempfile
+                from plugins.stt.model_loader import get_loaded_model, load_model
+
+                model = get_loaded_model()
+                if model is None:
+                    model = load_model({"model_name": "tiny", "device": "cpu", "compute_type": "int8", "beam_size": 1})
+
+                suffix = ".webm" if "webm" in content_type else ".wav"
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_audio:
+                    temp_audio.write(raw_data)
+                    temp_path = temp_audio.name
+
+                try:
+                    transcription = model.transcribe(temp_path)
+                    text = transcription.get("text", "").strip()
+                    result = {
+                        "status": "SUCCESS",
+                        "text": text,
+                        "language": transcription.get("language", "en"),
+                        "duration": transcription.get("duration", 0),
+                    }
+                finally:
+                    if os.path.exists(temp_path):
+                        try:
+                            os.unlink(temp_path)
+                        except Exception:
+                            pass
+
+                self._write_json(200, result)
+                return
+
             payload = self._json_body()
             if self.path == "/devices/register":
                 print("[NEXUS:http] Handling /devices/register")
@@ -231,6 +270,18 @@ def main() -> None:
         websocket_scheme = "wss"
     runtime = NexusRuntime()
     runtime.start()
+
+    # Preload STT model in background so first transcription has 0ms cold-start
+    def _preload_stt() -> None:
+        try:
+            from plugins.stt.model_loader import get_loaded_model, load_model
+            if get_loaded_model() is None:
+                load_model({"model_name": "tiny", "device": "cpu", "compute_type": "int8", "beam_size": 1})
+                print("[NEXUS:stt] Whisper tiny STT model preloaded successfully.")
+        except Exception as exc:
+            print(f"[NEXUS:stt] Whisper preload note: {exc}")
+    threading.Thread(target=_preload_stt, daemon=True).start()
+
     start_realtime_device_server(args.host, args.realtime_port, ssl_context)
     print(f"Nexus realtime gateway listening on {websocket_scheme}://{args.host}:{args.realtime_port}/device")
     server = NexusHTTPServer((args.host, args.port), runtime)

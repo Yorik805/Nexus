@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConnectionState, Interaction, NexusEvent, VoiceState } from './types'
+import type { ConnectionState, Interaction, NexusEvent, SttMode, VoiceState } from './types'
 
 type ApiEvent = { time: string; kind: string; source: string; message: string }
 type ApiState = {
@@ -31,7 +31,7 @@ declare global {
 }
 
 const MAX_EVENTS = 100
-const MAX_INTERACTIONS = 6
+const MAX_INTERACTIONS = 3
 const WAKE_WORD = 'hey'
 const WAKE_SILENCE_TIMEOUT_MS = 5_000
 const SPEECH_PAUSE_TIMEOUT_MS = 1_400
@@ -163,6 +163,7 @@ export function useNexus() {
   const [lastCommunication, setLastCommunication] = useState(0)
   const [voiceError, setVoiceError] = useState('')
   const [rawTranscript, setRawTranscript] = useState('')
+  const [sttMode, setSttMode] = useState<SttMode>('web')
   
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -185,6 +186,36 @@ export function useNexus() {
   const recognitionRestartAttemptsRef = useRef(0)
   const recognitionTextRef = useRef('')
   const notAllowedRetryRef = useRef(0)
+
+  // Server-side STT refs
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const vadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const serverAudioChunksRef = useRef<Blob[]>([])
+  const isTranscribingRef = useRef(false)
+  const lastVoiceTimeRef = useRef(0)
+  const serverSpeakingRef = useRef(false)
+  const lastInterimSentTimeRef = useRef(0)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('nexus_stt_mode')
+      if (saved === 'web' || saved === 'server') {
+        setSttMode(saved)
+      }
+    }
+  }, [])
+
+  const toggleSttMode = useCallback(() => {
+    setSttMode((prev) => {
+      const next = prev === 'web' ? 'server' : 'web'
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nexus_stt_mode', next)
+      }
+      return next
+    })
+  }, [])
 
   const addInteraction = useCallback((role: Interaction['role'], text: string) => {
     setInteractions((current) => [...current, { id: `${Date.now()}-${role}`, role, text, timestamp: Date.now() }].slice(-MAX_INTERACTIONS))
@@ -322,7 +353,7 @@ export function useNexus() {
     }
   }, [addInteraction, refresh, speak])
 
-  const commitCommand = useCallback(() => {
+  const commitCommand = useCallback((overrideText?: string) => {
     if (speechPauseTimerRef.current) {
       clearTimeout(speechPauseTimerRef.current)
       speechPauseTimerRef.current = null
@@ -334,7 +365,7 @@ export function useNexus() {
 
     if (isSendingRef.current) return
 
-    const candidate = speechBufferRef.current.trim()
+    const candidate = (overrideText !== undefined ? overrideText : speechBufferRef.current).trim()
     const clean = meaningfulCommand(candidate)
 
     armedRef.current = false
@@ -342,6 +373,7 @@ export function useNexus() {
     speechBufferRef.current = ''
     sessionFinalRef.current = ''
     recognitionTextRef.current = ''
+    serverAudioChunksRef.current = []
 
     if (isMeaningfulCommand(clean)) {
       setLiveTranscript(clean)
@@ -405,8 +437,191 @@ export function useNexus() {
     }
   }, [resetSpeechPauseTimer])
 
+  const stopServerStt = useCallback(() => {
+    if (vadIntervalRef.current) {
+      clearInterval(vadIntervalRef.current)
+      vadIntervalRef.current = null
+    }
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+    } catch {}
+    mediaRecorderRef.current = null
+    try {
+      audioContextRef.current?.close()
+    } catch {}
+    audioContextRef.current = null
+    analyserRef.current = null
+    serverAudioChunksRef.current = []
+    serverSpeakingRef.current = false
+    isTranscribingRef.current = false
+  }, [])
+
+  const startServerSttSession = useCallback(() => {
+    if (!listeningRef.current || !streamRef.current) return
+    stopServerStt()
+
+    try {
+      const stream = streamRef.current
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      if (!AudioContextClass) {
+        setVoiceError('Web Audio API is not supported in this browser.')
+        return
+      }
+
+      const audioCtx = new AudioContextClass()
+      const source = audioCtx.createMediaStreamSource(stream)
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 512
+      source.connect(analyser)
+
+      audioContextRef.current = audioCtx
+      analyserRef.current = analyser
+
+      const mimeType = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : ''
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          serverAudioChunksRef.current.push(event.data)
+        }
+      }
+      recorder.start(250)
+      mediaRecorderRef.current = recorder
+
+      vadIntervalRef.current = setInterval(async () => {
+        if (!analyserRef.current || !listeningRef.current) return
+
+        const buffer = new Float32Array(analyserRef.current.fftSize)
+        analyserRef.current.getFloatTimeDomainData(buffer)
+        let sum = 0
+        for (let i = 0; i < buffer.length; i++) {
+          sum += buffer[i] * buffer[i]
+        }
+        const rms = Math.sqrt(sum / buffer.length)
+        const isVoice = rms > 0.025
+
+        const now = Date.now()
+
+        if (isVoice) {
+          lastVoiceTimeRef.current = now
+          if (speakingRef.current) {
+            window.speechSynthesis?.cancel()
+            fishAudioRef.current?.pause()
+            speakingRef.current = false
+            setVoiceState('interruption')
+          }
+
+          if (!serverSpeakingRef.current) {
+            serverSpeakingRef.current = true
+            if (armedRef.current) {
+              isUserSpeakingRef.current = true
+              setVoiceState('user_speaking')
+              if (silenceTimerRef.current) {
+                clearTimeout(silenceTimerRef.current)
+                silenceTimerRef.current = null
+              }
+            }
+          }
+
+          // Request interim transcription every 600ms while user is speaking
+          if (!isTranscribingRef.current && now - lastInterimSentTimeRef.current >= 600 && serverAudioChunksRef.current.length > 0) {
+            lastInterimSentTimeRef.current = now
+            isTranscribingRef.current = true
+            const blob = new Blob(serverAudioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+
+            try {
+              const res = await fetch('/api/stt', {
+                method: 'POST',
+                headers: { 'Content-Type': blob.type },
+                body: blob,
+              })
+              if (res.ok) {
+                const data = await res.json()
+                const text = String(data.text || '').trim()
+                if (text) {
+                  setRawTranscript(text)
+                  if (!armedRef.current) {
+                    const wake = extractWakeWord(text)
+                    if (wake.detected) {
+                      serverAudioChunksRef.current = []
+                      activateListening(wake.trailingText)
+                    }
+                  } else {
+                    const clean = stripWakeWord(text)
+                    if (clean) {
+                      isUserSpeakingRef.current = true
+                      speechBufferRef.current = clean
+                      setLiveTranscript(clean)
+                      setVoiceState('user_speaking')
+                    }
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('Server STT interim error:', err)
+            } finally {
+              isTranscribingRef.current = false
+            }
+          }
+        } else {
+          // Silence detected
+          if (serverSpeakingRef.current && now - lastVoiceTimeRef.current >= 1200) {
+            serverSpeakingRef.current = false
+
+            if (armedRef.current) {
+              // User stopped speaking their command! Perform final transcription
+              if (serverAudioChunksRef.current.length > 0) {
+                const finalBlob = new Blob(serverAudioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+                serverAudioChunksRef.current = []
+                isTranscribingRef.current = true
+                try {
+                  const res = await fetch('/api/stt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': finalBlob.type },
+                    body: finalBlob,
+                  })
+                  if (res.ok) {
+                    const data = await res.json()
+                    const finalText = String(data.text || '').trim()
+                    const clean = stripWakeWord(finalText)
+                    commitCommand(clean)
+                  } else {
+                    commitCommand()
+                  }
+                } catch {
+                  commitCommand()
+                } finally {
+                  isTranscribingRef.current = false
+                }
+              } else {
+                commitCommand()
+              }
+            } else {
+              // In standby, reset accumulated chunks periodically if silent
+              if (serverAudioChunksRef.current.length > 20) {
+                serverAudioChunksRef.current = serverAudioChunksRef.current.slice(-6)
+              }
+            }
+          }
+        }
+      }, 100)
+    } catch (err) {
+      console.error('Server STT startup failed:', err)
+      setVoiceError('Failed to initialize server STT audio recorder.')
+    }
+  }, [activateListening, commitCommand, stopServerStt])
+
   const startRecognitionSession = useCallback(() => {
     if (!listeningRef.current) return
+    stopServerStt()
 
     if (recognitionRef.current) {
       try {
@@ -428,15 +643,18 @@ export function useNexus() {
 
     recognition.onresult = (event) => {
       notAllowedRetryRef.current = 0
-      let interim = ''
-      let finalText = ''
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const text = event.results[index][0].transcript
-        if (event.results[index].isFinal) finalText += text
-        else interim += text
+      let sessionFinal = ''
+      let sessionInterim = ''
+      for (let i = 0; i < event.results.length; i++) {
+        const item = event.results[i]
+        if (item.isFinal) {
+          sessionFinal += (sessionFinal ? ' ' : '') + item[0].transcript.trim()
+        } else {
+          sessionInterim += (sessionInterim ? ' ' : '') + item[0].transcript.trim()
+        }
       }
 
-      const transcript = `${finalText} ${interim}`.trim()
+      const transcript = `${sessionFinal} ${sessionInterim}`.trim()
       if (transcript) {
         setRawTranscript(transcript)
       }
@@ -451,50 +669,38 @@ export function useNexus() {
 
       // 1. STANDBY MODE (listening for wake word)
       if (!armedRef.current) {
-        const accumulated = `${recognitionTextRef.current} ${transcript}`.trim()
-        const wake = extractWakeWord(accumulated)
-
+        const wake = extractWakeWord(transcript)
         if (wake.detected) {
           recognitionTextRef.current = ''
           activateListening(wake.trailingText)
           return
         }
 
-        const wakeDirect = extractWakeWord(transcript)
-        if (wakeDirect.detected) {
+        const accumulated = `${recognitionTextRef.current} ${transcript}`.trim()
+        const wakeAcc = extractWakeWord(accumulated)
+        if (wakeAcc.detected) {
           recognitionTextRef.current = ''
-          activateListening(wakeDirect.trailingText)
+          activateListening(wakeAcc.trailingText)
           return
         }
 
-        if (finalText.trim()) {
-          recognitionTextRef.current = `${recognitionTextRef.current} ${finalText}`.trim().slice(-100)
+        if (sessionFinal) {
+          recognitionTextRef.current = sessionFinal.slice(-80)
         }
         return
       }
 
       // 2. ARMED / LISTENING MODE (capturing user command)
-      // Cancel 5-second silence timer because speech is actively arriving
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current)
         silenceTimerRef.current = null
       }
 
-      // Accumulate finalized text into sessionFinalRef
-      if (finalText.trim()) {
-        const cleanFinal = stripWakeWord(finalText)
-        if (cleanFinal) {
-          sessionFinalRef.current = `${sessionFinalRef.current} ${cleanFinal}`.trim()
-        }
-      }
-
-      const cleanInterim = stripWakeWord(interim)
-      const currentFullText = `${sessionFinalRef.current} ${cleanInterim}`.trim()
-
-      if (currentFullText) {
+      const cleanCommand = stripWakeWord(transcript)
+      if (cleanCommand) {
         isUserSpeakingRef.current = true
-        speechBufferRef.current = currentFullText
-        setLiveTranscript(currentFullText)
+        speechBufferRef.current = cleanCommand
+        setLiveTranscript(cleanCommand)
         setVoiceState('user_speaking')
         resetSpeechPauseTimer()
       }
@@ -543,7 +749,7 @@ export function useNexus() {
 
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
       recognitionRestartRef.current = setTimeout(() => {
-        if (listeningRef.current) startRecognitionSession()
+        if (listeningRef.current && sttMode === 'web') startRecognitionSession()
       }, RECOGNITION_RESTART_DELAY_MS)
     }
 
@@ -553,7 +759,27 @@ export function useNexus() {
     } catch (err) {
       console.warn('Recognition start warning:', err)
     }
-  }, [activateListening, commitCommand, resetSpeechPauseTimer])
+  }, [activateListening, commitCommand, resetSpeechPauseTimer, stopServerStt, sttMode])
+
+  useEffect(() => {
+    if (listeningRef.current) {
+      if (sttMode === 'server') {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.onresult = null
+            recognitionRef.current.onerror = null
+            recognitionRef.current.onend = null
+            recognitionRef.current.stop()
+          } catch {}
+          recognitionRef.current = null
+        }
+        startServerSttSession()
+      } else {
+        stopServerStt()
+        startRecognitionSession()
+      }
+    }
+  }, [sttMode, startRecognitionSession, startServerSttSession, stopServerStt])
 
   const toggleMic = useCallback(async () => {
     if (micEnabled) {
@@ -564,6 +790,7 @@ export function useNexus() {
       speechBufferRef.current = ''
       sessionFinalRef.current = ''
       setVoiceError('')
+      stopServerStt()
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
@@ -591,9 +818,6 @@ export function useNexus() {
         throw new Error('Microphone access requires HTTPS or localhost. If connecting from a tablet or phone, use Tailscale HTTPS or a secure tunnel.')
       }
 
-      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (!Recognition) throw new Error('Speech recognition is not supported by this browser. Please use Chrome, Edge, or Safari.')
-
       // KEEP the media stream active while mic is enabled to maintain persistent audio capture permission
       if (navigator.mediaDevices?.getUserMedia) {
         streamRef.current = await navigator.mediaDevices.getUserMedia({
@@ -614,9 +838,16 @@ export function useNexus() {
       setMicEnabled(true)
       setVoiceState('idle')
 
-      startRecognitionSession()
+      if (sttMode === 'server') {
+        startServerSttSession()
+      } else {
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
+        if (!Recognition) throw new Error('Speech recognition is not supported by this browser. Please switch to Server STT or use Chrome.')
+        startRecognitionSession()
+      }
     } catch (error) {
       console.error('MIC START FAILED:', error)
+      stopServerStt()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       setVoiceError(error instanceof Error ? error.message : 'Microphone setup failed.')
@@ -626,7 +857,7 @@ export function useNexus() {
     } finally {
       setIsStartingMic(false)
     }
-  }, [micEnabled, startRecognitionSession])
+  }, [micEnabled, startRecognitionSession, startServerSttSession, stopServerStt, sttMode])
 
   const stopSpeaking = useCallback(() => {
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
@@ -654,6 +885,7 @@ export function useNexus() {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
       if (interruptionTimerRef.current) clearTimeout(interruptionTimerRef.current)
+      stopServerStt()
       try {
         if (recognitionRef.current) {
           recognitionRef.current.onresult = null
@@ -668,9 +900,30 @@ export function useNexus() {
       window.speechSynthesis?.cancel()
       fishAudioRef.current?.pause()
     }
-  }, [refresh])
+  }, [refresh, stopServerStt])
 
-  return { connection, micEnabled, isStartingMic, voiceState, voiceError, liveTranscript, spokenResponse, events, interactions, latencyMs, lastCommunication, rawTranscript, toggleMic, retry, stopSpeaking, triggerInterruption: stopSpeaking, sendText }
+  return {
+    connection,
+    micEnabled,
+    isStartingMic,
+    voiceState,
+    voiceError,
+    liveTranscript,
+    spokenResponse,
+    events,
+    interactions,
+    latencyMs,
+    lastCommunication,
+    rawTranscript,
+    sttMode,
+    toggleSttMode,
+    setSttMode,
+    toggleMic,
+    retry,
+    stopSpeaking,
+    triggerInterruption: stopSpeaking,
+    sendText,
+  }
 }
 
 export type NexusClient = ReturnType<typeof useNexus>

@@ -10,7 +10,7 @@ import { formatClock } from '@/lib/nexus/format'
  * Replace `interactions` with real Nexus request/response data.
  */
 export function InteractionHistory({ interactions }: { interactions: Interaction[] }) {
-  const recent = interactions.slice(-6).reverse()
+  const recent = interactions.slice(-3).reverse()
   return (
     <section
       aria-label="Recent interaction"
@@ -21,7 +21,7 @@ export function InteractionHistory({ interactions }: { interactions: Interaction
           LATEST INTERACTION
         </h3>
         <span className="font-mono text-[10px] tracking-widest text-muted-foreground/60">
-          {Math.ceil(interactions.length / 2)} CONVERSATIONS
+          {recent.length} OF 3 MESSAGES
         </span>
       </div>
 
