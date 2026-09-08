@@ -115,9 +115,14 @@ def _build_dashboard_state() -> dict[str, Any]:
             provider = {"name": str(details.get("provider", "-")), "model": str(details.get("model", "-")), "status": "ONLINE"}
         if step == "provider.request.error":
             provider["status"] = "ERROR"
-        if step in {"event.received", "provider.response.parsed", "provider.request.error", "plugin.execution", "event.complete"}:
+        if step in {"event.received", "provider.response.parsed", "provider.request.error", "plugin.execution", "event.complete", "stt.transcribe"}:
             if step == "event.received":
                 kind, source, message = "USER_MESSAGE", str(details.get("source", "runtime")), "Event received"
+            elif step == "stt.transcribe":
+                text = str(details.get("text", "")).strip()
+                dur = details.get("audio_duration", 0)
+                lat = details.get("latency_ms", 0)
+                kind, source, message = "STT", "whisper", f'"{text}" ({dur}s audio, {lat}ms)' if text and text != "(silence)" else f"Voice chunk ({dur}s audio, {lat}ms)"
             elif step == "provider.request.error":
                 kind, source, message = "ERROR", str(details.get("provider", "provider")), str(details.get("error_code", "Provider error"))
             elif step == "plugin.execution":

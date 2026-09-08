@@ -1,15 +1,23 @@
-﻿import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import fs from 'node:fs'
 import path from 'node:path'
 
 function configuredNexusUrl() {
   if (process.env.NEXUS_URL) return process.env.NEXUS_URL
-  try {
-    const config = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), '../../../nexus.config.json'), 'utf8')) as { runtime_port?: number }
-    return `http://127.0.0.1:${config.runtime_port || 8765}`
-  } catch {
-    return 'http://127.0.0.1:8765'
+  const candidates = [
+    path.resolve(process.cwd(), 'nexus.config.json'),
+    path.resolve(process.cwd(), '../../../nexus.config.json'),
+    path.resolve(process.cwd(), '../../nexus.config.json'),
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(/*turbopackIgnore: true*/ c)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ c, 'utf8')) as { runtime_port?: number }
+        if (config.runtime_port) return `http://127.0.0.1:${config.runtime_port}`
+      } catch {}
+    }
   }
+  return 'http://127.0.0.1:8765'
 }
 
 export async function POST(request: NextRequest) {
@@ -20,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     const nexusUrl = configuredNexusUrl().replace(/\/$/, '')
-    const contentType = request.headers.get('content-type') || 'audio/webm'
+    const contentType = request.headers.get('content-type') || 'audio/wav'
 
     const response = await fetch(`${nexusUrl}/stt`, {
       method: 'POST',
@@ -37,6 +45,8 @@ export async function POST(request: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     })
   } catch (error) {
+    console.error('[API:stt] Proxy error:', error)
     return NextResponse.json({ status: 'ERROR', message: String(error) }, { status: 502 })
   }
 }
+

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConnectionState, Interaction, NexusEvent, SttMode, VoiceState } from './types'
+import { calculateRms, downsampleBuffer, encodeWav } from './audio-utils'
 
 type ApiEvent = { time: string; kind: string; source: string; message: string }
 type ApiState = {
@@ -188,15 +189,17 @@ export function useNexus() {
   const notAllowedRetryRef = useRef(0)
 
   // Server-side STT refs
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const vadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const serverAudioChunksRef = useRef<Blob[]>([])
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const silentGainRef = useRef<GainNode | null>(null)
+  const pcmRingBufferRef = useRef<Float32Array[]>([])
+  const commandPcmChunksRef = useRef<Float32Array[]>([])
+  const serverTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isTranscribingRef = useRef(false)
   const lastVoiceTimeRef = useRef(0)
-  const serverSpeakingRef = useRef(false)
-  const lastInterimSentTimeRef = useRef(0)
+  const lastServerSendTimeRef = useRef(0)
+  const recentVoiceDetectedRef = useRef(false)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -373,7 +376,7 @@ export function useNexus() {
     speechBufferRef.current = ''
     sessionFinalRef.current = ''
     recognitionTextRef.current = ''
-    serverAudioChunksRef.current = []
+    commandPcmChunksRef.current = []
 
     if (isMeaningfulCommand(clean)) {
       setLiveTranscript(clean)
@@ -438,24 +441,39 @@ export function useNexus() {
   }, [resetSpeechPauseTimer])
 
   const stopServerStt = useCallback(() => {
-    if (vadIntervalRef.current) {
-      clearInterval(vadIntervalRef.current)
-      vadIntervalRef.current = null
+    if (serverTimerRef.current) {
+      clearInterval(serverTimerRef.current)
+      serverTimerRef.current = null
+    }
+    if (scriptProcessorRef.current) {
+      try {
+        scriptProcessorRef.current.disconnect()
+        scriptProcessorRef.current.onaudioprocess = null
+      } catch {}
+      scriptProcessorRef.current = null
+    }
+    if (mediaStreamSourceRef.current) {
+      try {
+        mediaStreamSourceRef.current.disconnect()
+      } catch {}
+      mediaStreamSourceRef.current = null
+    }
+    if (silentGainRef.current) {
+      try {
+        silentGainRef.current.disconnect()
+      } catch {}
+      silentGainRef.current = null
     }
     try {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop()
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        void audioContextRef.current.close()
       }
     } catch {}
-    mediaRecorderRef.current = null
-    try {
-      audioContextRef.current?.close()
-    } catch {}
     audioContextRef.current = null
-    analyserRef.current = null
-    serverAudioChunksRef.current = []
-    serverSpeakingRef.current = false
+    pcmRingBufferRef.current = []
+    commandPcmChunksRef.current = []
     isTranscribingRef.current = false
+    recentVoiceDetectedRef.current = false
   }, [])
 
   const startServerSttSession = useCallback(() => {
@@ -464,54 +482,43 @@ export function useNexus() {
 
     try {
       const stream = streamRef.current
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       if (!AudioContextClass) {
         setVoiceError('Web Audio API is not supported in this browser.')
         return
       }
 
-      const audioCtx = new AudioContextClass()
-      const source = audioCtx.createMediaStreamSource(stream)
-      const analyser = audioCtx.createAnalyser()
-      analyser.fftSize = 512
-      source.connect(analyser)
-
-      audioContextRef.current = audioCtx
-      analyserRef.current = analyser
-
-      const mimeType = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : ''
-
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          serverAudioChunksRef.current.push(event.data)
-        }
+      let audioCtx: AudioContext
+      try {
+        audioCtx = new AudioContextClass({ sampleRate: 16000 })
+      } catch {
+        audioCtx = new AudioContextClass()
       }
-      recorder.start(250)
-      mediaRecorderRef.current = recorder
 
-      vadIntervalRef.current = setInterval(async () => {
-        if (!analyserRef.current || !listeningRef.current) return
+      if (audioCtx.state === 'suspended') {
+        void audioCtx.resume()
+      }
 
-        const buffer = new Float32Array(analyserRef.current.fftSize)
-        analyserRef.current.getFloatTimeDomainData(buffer)
-        let sum = 0
-        for (let i = 0; i < buffer.length; i++) {
-          sum += buffer[i] * buffer[i]
-        }
-        const rms = Math.sqrt(sum / buffer.length)
-        const isVoice = rms > 0.025
+      const source = audioCtx.createMediaStreamSource(stream)
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1)
 
+      const silentGain = audioCtx.createGain()
+      silentGain.gain.value = 0
+
+      processor.onaudioprocess = (e) => {
+        if (!listeningRef.current) return
+        const channelData = e.inputBuffer.getChannelData(0)
+        const samples = downsampleBuffer(channelData, audioCtx.sampleRate, 16000)
+        const rms = calculateRms(samples)
         const now = Date.now()
 
-        if (isVoice) {
+        // Sensitive threshold for voice activity detection
+        if (rms > 0.005) {
+          recentVoiceDetectedRef.current = true
           lastVoiceTimeRef.current = now
+
           if (speakingRef.current) {
             window.speechSynthesis?.cancel()
             fishAudioRef.current?.pause()
@@ -519,103 +526,179 @@ export function useNexus() {
             setVoiceState('interruption')
           }
 
-          if (!serverSpeakingRef.current) {
-            serverSpeakingRef.current = true
-            if (armedRef.current) {
-              isUserSpeakingRef.current = true
-              setVoiceState('user_speaking')
-              if (silenceTimerRef.current) {
-                clearTimeout(silenceTimerRef.current)
-                silenceTimerRef.current = null
-              }
+          if (armedRef.current && !isUserSpeakingRef.current) {
+            isUserSpeakingRef.current = true
+            setVoiceState('user_speaking')
+            if (silenceTimerRef.current) {
+              clearTimeout(silenceTimerRef.current)
+              silenceTimerRef.current = null
             }
           }
+        }
 
-          // Request interim transcription every 600ms while user is speaking
-          if (!isTranscribingRef.current && now - lastInterimSentTimeRef.current >= 600 && serverAudioChunksRef.current.length > 0) {
-            lastInterimSentTimeRef.current = now
+        // Rolling ring buffer for standby wake word (keep last ~3.5s of audio)
+        pcmRingBufferRef.current.push(samples)
+        if (pcmRingBufferRef.current.length > 14) {
+          pcmRingBufferRef.current.shift()
+        }
+
+        // When listening to user command, accumulate all command audio
+        if (armedRef.current) {
+          commandPcmChunksRef.current.push(samples)
+        }
+      }
+
+      source.connect(processor)
+      processor.connect(silentGain)
+      silentGain.connect(audioCtx.destination)
+
+      audioContextRef.current = audioCtx
+      mediaStreamSourceRef.current = source
+      scriptProcessorRef.current = processor
+      silentGainRef.current = silentGain
+
+      // Audio loop: polls every 200ms
+      serverTimerRef.current = setInterval(async () => {
+        if (!listeningRef.current) return
+        const now = Date.now()
+
+        // 1. STANDBY MODE: Wake word detection & live Raw STT stream
+        if (!armedRef.current) {
+          const timeSinceLastSend = now - lastServerSendTimeRef.current
+          const hasRecentVoice = recentVoiceDetectedRef.current || now - lastVoiceTimeRef.current < 2000
+
+          if (timeSinceLastSend >= (hasRecentVoice ? 900 : 2000) && pcmRingBufferRef.current.length > 0) {
+            recentVoiceDetectedRef.current = false
+            if (isTranscribingRef.current) return
+
+            const totalLen = pcmRingBufferRef.current.reduce((acc, c) => acc + c.length, 0)
+            const merged = new Float32Array(totalLen)
+            let offset = 0
+            for (const chunk of pcmRingBufferRef.current) {
+              merged.set(chunk, offset)
+              offset += chunk.length
+            }
+
+            const wavBlob = encodeWav(merged, 16000)
+            lastServerSendTimeRef.current = now
             isTranscribingRef.current = true
-            const blob = new Blob(serverAudioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
 
             try {
               const res = await fetch('/api/stt', {
                 method: 'POST',
-                headers: { 'Content-Type': blob.type },
-                body: blob,
+                headers: { 'Content-Type': 'audio/wav' },
+                body: wavBlob,
               })
               if (res.ok) {
                 const data = await res.json()
                 const text = String(data.text || '').trim()
                 if (text) {
                   setRawTranscript(text)
-                  if (!armedRef.current) {
-                    const wake = extractWakeWord(text)
-                    if (wake.detected) {
-                      serverAudioChunksRef.current = []
-                      activateListening(wake.trailingText)
-                    }
-                  } else {
-                    const clean = stripWakeWord(text)
-                    if (clean) {
-                      isUserSpeakingRef.current = true
-                      speechBufferRef.current = clean
-                      setLiveTranscript(clean)
-                      setVoiceState('user_speaking')
-                    }
+                  const wake = extractWakeWord(text)
+                  if (wake.detected) {
+                    pcmRingBufferRef.current = []
+                    commandPcmChunksRef.current = []
+                    activateListening(wake.trailingText)
                   }
                 }
               }
             } catch (err) {
-              console.warn('Server STT interim error:', err)
+              console.warn('[STT] Standby poll error:', err)
             } finally {
               isTranscribingRef.current = false
             }
           }
-        } else {
-          // Silence detected
-          if (serverSpeakingRef.current && now - lastVoiceTimeRef.current >= 1200) {
-            serverSpeakingRef.current = false
+        }
+        // 2. LISTENING MODE: Transcribing command + detecting silence pause
+        else {
+          const timeSinceVoice = now - lastVoiceTimeRef.current
+          const isSilence = timeSinceVoice >= 1200
 
-            if (armedRef.current) {
-              // User stopped speaking their command! Perform final transcription
-              if (serverAudioChunksRef.current.length > 0) {
-                const finalBlob = new Blob(serverAudioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
-                serverAudioChunksRef.current = []
-                isTranscribingRef.current = true
-                try {
-                  const res = await fetch('/api/stt', {
-                    method: 'POST',
-                    headers: { 'Content-Type': finalBlob.type },
-                    body: finalBlob,
-                  })
-                  if (res.ok) {
-                    const data = await res.json()
-                    const finalText = String(data.text || '').trim()
-                    const clean = stripWakeWord(finalText)
-                    commitCommand(clean)
-                  } else {
-                    commitCommand()
-                  }
-                } catch {
+          if (isSilence && commandPcmChunksRef.current.length > 0) {
+            // Silence detected: commit command!
+            const totalLen = commandPcmChunksRef.current.reduce((acc, c) => acc + c.length, 0)
+            const merged = new Float32Array(totalLen)
+            let offset = 0
+            for (const chunk of commandPcmChunksRef.current) {
+              merged.set(chunk, offset)
+              offset += chunk.length
+            }
+            commandPcmChunksRef.current = []
+
+            const wavBlob = encodeWav(merged, 16000)
+            isTranscribingRef.current = true
+
+            try {
+              const res = await fetch('/api/stt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'audio/wav' },
+                body: wavBlob,
+              })
+              if (res.ok) {
+                const data = await res.json()
+                const finalText = String(data.text || '').trim()
+                if (finalText) {
+                  setRawTranscript(finalText)
+                  const clean = stripWakeWord(finalText)
+                  commitCommand(clean)
+                } else {
                   commitCommand()
-                } finally {
-                  isTranscribingRef.current = false
                 }
               } else {
                 commitCommand()
               }
-            } else {
-              // In standby, reset accumulated chunks periodically if silent
-              if (serverAudioChunksRef.current.length > 20) {
-                serverAudioChunksRef.current = serverAudioChunksRef.current.slice(-6)
+            } catch {
+              commitCommand()
+            } finally {
+              isTranscribingRef.current = false
+            }
+          } else if (!isSilence && now - lastServerSendTimeRef.current >= 600 && commandPcmChunksRef.current.length > 0) {
+            // Interim command preview while user is speaking
+            if (isTranscribingRef.current) return
+
+            const totalLen = commandPcmChunksRef.current.reduce((acc, c) => acc + c.length, 0)
+            const merged = new Float32Array(totalLen)
+            let offset = 0
+            for (const chunk of commandPcmChunksRef.current) {
+              merged.set(chunk, offset)
+              offset += chunk.length
+            }
+
+            const wavBlob = encodeWav(merged, 16000)
+            lastServerSendTimeRef.current = now
+            isTranscribingRef.current = true
+
+            try {
+              const res = await fetch('/api/stt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'audio/wav' },
+                body: wavBlob,
+              })
+              if (res.ok) {
+                const data = await res.json()
+                const text = String(data.text || '').trim()
+                if (text) {
+                  setRawTranscript(text)
+                  const clean = stripWakeWord(text)
+                  if (clean) {
+                    isUserSpeakingRef.current = true
+                    speechBufferRef.current = clean
+                    setLiveTranscript(clean)
+                    setVoiceState('user_speaking')
+                  }
+                }
               }
+            } catch (err) {
+              console.warn('[STT] Interim error:', err)
+            } finally {
+              isTranscribingRef.current = false
             }
           }
         }
-      }, 100)
+      }, 200)
     } catch (err) {
       console.error('Server STT startup failed:', err)
-      setVoiceError('Failed to initialize server STT audio recorder.')
+      setVoiceError('Failed to initialize server STT audio capture.')
     }
   }, [activateListening, commitCommand, stopServerStt])
 

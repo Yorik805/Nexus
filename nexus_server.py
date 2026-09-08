@@ -9,6 +9,7 @@ import json
 import os
 import ssl
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -143,19 +144,42 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 if model is None:
                     model = load_model({"model_name": "tiny", "device": "cpu", "compute_type": "int8", "beam_size": 1})
 
-                suffix = ".webm" if "webm" in content_type else ".wav"
+                suffix = ".wav" if "wav" in content_type else ".webm"
                 with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_audio:
                     temp_audio.write(raw_data)
                     temp_path = temp_audio.name
 
+                start_time = time.time()
                 try:
                     transcription = model.transcribe(temp_path)
                     text = transcription.get("text", "").strip()
+                    duration = float(transcription.get("duration", 0))
+                    elapsed = round((time.time() - start_time) * 1000)
                     result = {
                         "status": "SUCCESS",
                         "text": text,
                         "language": transcription.get("language", "en"),
-                        "duration": transcription.get("duration", 0),
+                        "duration": duration,
+                        "latency_ms": elapsed,
+                    }
+                    print(f"[NEXUS:stt] Transcribed ({duration:.2f}s audio in {elapsed}ms): '{text}'")
+                    try:
+                        self.server.runtime.trace.record(
+                            "stt.transcribe",
+                            text=text if text else "(silence)",
+                            audio_duration=round(duration, 2),
+                            latency_ms=elapsed,
+                            audio_bytes=length,
+                        )
+                    except Exception as trace_err:
+                        print(f"[NEXUS:stt] Trace log note: {trace_err}")
+                except Exception as transcribe_err:
+                    print(f"[NEXUS:stt] Transcription error: {transcribe_err}")
+                    result = {
+                        "status": "ERROR",
+                        "message": str(transcribe_err),
+                        "text": "",
+                        "duration": 0,
                     }
                 finally:
                     if os.path.exists(temp_path):
