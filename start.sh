@@ -66,7 +66,7 @@ if [[ -n "$PIP_PATH" ]]; then
 		"$PIP_PATH" install -r "$REQ_FILE" --quiet || "$PIP_PATH" install --break-system-packages -r "$REQ_FILE" --quiet || echo "[WARN] Python package install encountered a warning, continuing..."
 	fi
 else
-	echo "[WARN] pip not found. Please ensure Python dependencies (faster-whisper, websockets, etc.) are installed."
+	echo "[WARN] pip not found. Please ensure Python dependencies (SpeechRecognition, websockets, etc.) are installed."
 fi
 
 # 4. Check & Generate SSL Certificates if missing

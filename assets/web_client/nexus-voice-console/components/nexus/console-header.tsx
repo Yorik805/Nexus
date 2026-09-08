@@ -59,8 +59,8 @@ export function ConsoleHeader({
             onClick={onToggleSttMode}
             title={
               sttMode === 'server'
-                ? 'Server STT (Whisper) active. Click to switch to Web STT.'
-                : 'Browser Web STT active. Click to switch to Server Whisper STT.'
+                ? 'Server STT (Default Engine) active. Click to switch to Web STT.'
+                : 'Browser Web STT active. Click to switch to Server STT.'
             }
             className={cn(
               'hidden sm:flex items-center gap-1.5 rounded-md border px-3 py-2 font-mono text-xs tracking-wide transition-colors cursor-pointer select-none active:scale-95',

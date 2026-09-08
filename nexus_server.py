@@ -138,11 +138,7 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
 
                 raw_data = self.rfile.read(length)
                 import tempfile
-                from plugins.stt.model_loader import get_loaded_model, load_model
-
-                model = get_loaded_model()
-                if model is None:
-                    model = load_model({"model_name": "tiny", "device": "cpu", "compute_type": "int8", "beam_size": 1})
+                from plugins.stt import execute as execute_stt
 
                 suffix = ".wav" if "wav" in content_type else ".webm"
                 with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_audio:
@@ -151,28 +147,43 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
 
                 start_time = time.time()
                 try:
-                    transcription = model.transcribe(temp_path)
-                    text = transcription.get("text", "").strip()
-                    duration = float(transcription.get("duration", 0))
+                    response = execute_stt({
+                        "action": "TRANSCRIBE",
+                        "data": {"audio_path": temp_path},
+                    })
                     elapsed = round((time.time() - start_time) * 1000)
-                    result = {
-                        "status": "SUCCESS",
-                        "text": text,
-                        "language": transcription.get("language", "en"),
-                        "duration": duration,
-                        "latency_ms": elapsed,
-                    }
-                    print(f"[NEXUS:stt] Transcribed ({duration:.2f}s audio in {elapsed}ms): '{text}'")
-                    try:
-                        self.server.runtime.trace.record(
-                            "stt.transcribe",
-                            text=text if text else "(silence)",
-                            audio_duration=round(duration, 2),
-                            latency_ms=elapsed,
-                            audio_bytes=length,
-                        )
-                    except Exception as trace_err:
-                        print(f"[NEXUS:stt] Trace log note: {trace_err}")
+                    if response.get("status") == "SUCCESS":
+                        data = response.get("data", {})
+                        text = str(data.get("text", "")).strip()
+                        duration = float(data.get("duration", 0))
+                        engine = data.get("engine", "default-stt")
+                        result = {
+                            "status": "SUCCESS",
+                            "text": text,
+                            "language": data.get("language", "en"),
+                            "duration": duration,
+                            "latency_ms": elapsed,
+                            "engine": engine,
+                        }
+                        print(f"[NEXUS:stt] Transcribed ({duration:.2f}s audio in {elapsed}ms via {engine}): '{text}'")
+                        try:
+                            self.server.runtime.trace.record(
+                                "stt.transcribe",
+                                text=text if text else "(silence)",
+                                audio_duration=round(duration, 2),
+                                latency_ms=elapsed,
+                                engine=engine,
+                                audio_bytes=length,
+                            )
+                        except Exception as trace_err:
+                            print(f"[NEXUS:stt] Trace log note: {trace_err}")
+                    else:
+                        result = {
+                            "status": "ERROR",
+                            "message": response.get("message", "Transcription failed."),
+                            "text": "",
+                            "duration": 0,
+                        }
                 except Exception as transcribe_err:
                     print(f"[NEXUS:stt] Transcription error: {transcribe_err}")
                     result = {
@@ -294,17 +305,6 @@ def main() -> None:
         websocket_scheme = "wss"
     runtime = NexusRuntime()
     runtime.start()
-
-    # Preload STT model in background so first transcription has 0ms cold-start
-    def _preload_stt() -> None:
-        try:
-            from plugins.stt.model_loader import get_loaded_model, load_model
-            if get_loaded_model() is None:
-                load_model({"model_name": "tiny", "device": "cpu", "compute_type": "int8", "beam_size": 1})
-                print("[NEXUS:stt] Whisper tiny STT model preloaded successfully.")
-        except Exception as exc:
-            print(f"[NEXUS:stt] Whisper preload note: {exc}")
-    threading.Thread(target=_preload_stt, daemon=True).start()
 
     start_realtime_device_server(args.host, args.realtime_port, ssl_context)
     print(f"Nexus realtime gateway listening on {websocket_scheme}://{args.host}:{args.realtime_port}/device")

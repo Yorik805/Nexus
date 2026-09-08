@@ -277,7 +277,7 @@ export function VoiceInterface({
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              SERVER (WHISPER)
+              SERVER STT
             </button>
           </div>
         )}
