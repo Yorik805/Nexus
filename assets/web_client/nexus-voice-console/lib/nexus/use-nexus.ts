@@ -34,6 +34,7 @@ const MAX_EVENTS = 100
 const MAX_INTERACTIONS = 3
 const WAKE_WORD = 'hey'
 const WAKE_SILENCE_TIMEOUT_MS = 5_000
+const POST_TTS_FOLLOWUP_TIMEOUT_MS = 3_500
 const SPEECH_PAUSE_TIMEOUT_MS = 1_400
 const INTERRUPTION_GRACE_MS = 1_800
 const TTS_RESTART_DELAY_MS = 450
@@ -107,17 +108,34 @@ function editDistance(left: string, right: string): number {
   return row[right.length]
 }
 
+function isNexusMatch(target: string): boolean {
+  return ['nexus', 'nex', 'nx', 'nxx', 'nex us'].includes(target) || editDistance(target, 'nexus') <= 2
+}
+
+function isAccessMatch(target: string): boolean {
+  return (
+    ['access', 'acces', 'axis', 'axes', 'akces'].includes(target) ||
+    editDistance(target, 'access') <= 2 ||
+    editDistance(target, 'acces') <= 1
+  )
+}
+
+function isWakeTarget(target: string): boolean {
+  return isNexusMatch(target) || isAccessMatch(target)
+}
+
 function extractWakeWord(value: string): { detected: boolean; trailingText: string } {
   const normalized = normalizeSpeech(value).toLowerCase()
   const words = normalized.split(' ').filter(Boolean)
-  for (let index = 0; index < Math.min(words.length, 3); index += 1) {
-    if (words[index] === 'hey' && index + 1 < words.length) {
+  for (let index = 0; index < Math.min(words.length, 4); index += 1) {
+    const word = words[index]
+    if (['hey', 'hi', 'hello', 'ok'].includes(word) && index + 1 < words.length) {
       const target = words[index + 1]
-      if (['nexus', 'nex', 'nx', 'nxx', 'nex us'].includes(target) || editDistance(target, 'nexus') <= 2) {
+      if (isWakeTarget(target)) {
         return { detected: true, trailingText: words.slice(index + 2).join(' ').trim() }
       }
     }
-    if (['nexus', 'nex', 'nx', 'nxx'].includes(words[index]) || editDistance(words[index], 'nexus') <= 1) {
+    if (isWakeTarget(word)) {
       return { detected: true, trailingText: words.slice(index + 1).join(' ').trim() }
     }
   }
@@ -127,14 +145,15 @@ function extractWakeWord(value: string): { detected: boolean; trailingText: stri
 function stripWakeWord(value: string): string {
   const normalized = normalizeSpeech(value).toLowerCase()
   const words = normalized.split(' ').filter(Boolean)
-  for (let index = 0; index < Math.min(words.length, 3); index += 1) {
-    if (words[index] === 'hey' && index + 1 < words.length) {
+  for (let index = 0; index < Math.min(words.length, 4); index += 1) {
+    const word = words[index]
+    if (['hey', 'hi', 'hello', 'ok'].includes(word) && index + 1 < words.length) {
       const target = words[index + 1]
-      if (['nexus', 'nex', 'nx', 'nxx', 'nex us'].includes(target) || editDistance(target, 'nexus') <= 2) {
+      if (isWakeTarget(target)) {
         return words.slice(index + 2).join(' ').trim()
       }
     }
-    if (['nexus', 'nex', 'nx', 'nxx'].includes(words[index]) || editDistance(words[index], 'nexus') <= 1) {
+    if (isWakeTarget(word)) {
       return words.slice(index + 1).join(' ').trim()
     }
   }
@@ -186,6 +205,9 @@ export function useNexus() {
   const notAllowedRetryRef = useRef(0)
   const utteranceStartIndexRef = useRef(0)
   const recognitionActiveRef = useRef(false)
+  const activeAbortControllerRef = useRef<AbortController | null>(null)
+  const activateListeningRef = useRef<(initialText?: string, timeoutMs?: number) => void>(() => {})
+  const startRecognitionSessionRef = useRef<() => void>(() => {})
 
   const addInteraction = useCallback((role: Interaction['role'], text: string) => {
     setInteractions((current) => [...current, { id: `${Date.now()}-${role}`, role, text, timestamp: Date.now() }].slice(-MAX_INTERACTIONS))
@@ -233,7 +255,10 @@ export function useNexus() {
       resumeOffsetRef.current = 0
       setSpokenResponse('')
       if (listeningRef.current) {
-        setVoiceState('idle')
+        if (!recognitionActiveRef.current) {
+          startRecognitionSessionRef.current()
+        }
+        activateListeningRef.current('', POST_TTS_FOLLOWUP_TIMEOUT_MS)
       }
     }
     utterance.onerror = () => {
@@ -273,8 +298,13 @@ export function useNexus() {
       audio.onended = () => {
         speakingRef.current = false
         setSpokenResponse('')
-        if (listeningRef.current) setVoiceState('idle')
         URL.revokeObjectURL(audio.src)
+        if (listeningRef.current) {
+          if (!recognitionActiveRef.current) {
+            startRecognitionSessionRef.current()
+          }
+          activateListeningRef.current('', POST_TTS_FOLLOWUP_TIMEOUT_MS)
+        }
       }
       audio.onerror = () => {
         speakingRef.current = false
@@ -291,6 +321,18 @@ export function useNexus() {
   const sendText = useCallback(async (text: string) => {
     const clean = text.trim()
     if (!clean) return
+
+    // If a previous LLM query is in flight, cut it off!
+    if (activeAbortControllerRef.current) {
+      try {
+        activeAbortControllerRef.current.abort()
+      } catch {}
+      activeAbortControllerRef.current = null
+    }
+
+    const controller = new AbortController()
+    activeAbortControllerRef.current = controller
+
     isSendingRef.current = true
     setVoiceState('processing')
     addInteraction('user', clean)
@@ -300,9 +342,14 @@ export function useNexus() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'USER_MESSAGE', source: 'web-client', message: clean }),
+        signal: controller.signal,
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.message || `Request returned ${response.status}`)
+
+      // If superseded by a newer message while waiting, ignore this response
+      if (activeAbortControllerRef.current !== controller) return
+
       const textResponse = responseText(data)
       setLatencyMs(Math.round(performance.now() - started))
       setLastCommunication(Date.now())
@@ -312,14 +359,21 @@ export function useNexus() {
         addInteraction('nexus', textResponse)
         void speak(textResponse)
       } else if (listeningRef.current) {
-        setVoiceState('idle')
+        activateListeningRef.current('', POST_TTS_FOLLOWUP_TIMEOUT_MS)
       }
       await refresh()
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Request was cleanly cut off by a newer command
+        return
+      }
       setConnection('error')
       if (listeningRef.current) setVoiceState('idle')
     } finally {
-      isSendingRef.current = false
+      if (activeAbortControllerRef.current === controller) {
+        activeAbortControllerRef.current = null
+        isSendingRef.current = false
+      }
     }
   }, [addInteraction, refresh, speak])
 
@@ -332,8 +386,6 @@ export function useNexus() {
       clearTimeout(silenceTimerRef.current)
       silenceTimerRef.current = null
     }
-
-    if (isSendingRef.current) return
 
     const candidate = speechBufferRef.current.trim()
     const clean = meaningfulCommand(candidate)
@@ -365,46 +417,49 @@ export function useNexus() {
     }, SPEECH_PAUSE_TIMEOUT_MS)
   }, [commitCommand])
 
-  const activateListening = useCallback((initialText = '') => {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current)
-      silenceTimerRef.current = null
-    }
-    if (speechPauseTimerRef.current) {
-      clearTimeout(speechPauseTimerRef.current)
-      speechPauseTimerRef.current = null
-    }
+  const activateListening = useCallback(
+    (initialText = '', timeoutMs = WAKE_SILENCE_TIMEOUT_MS) => {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current)
+        silenceTimerRef.current = null
+      }
+      if (speechPauseTimerRef.current) {
+        clearTimeout(speechPauseTimerRef.current)
+        speechPauseTimerRef.current = null
+      }
 
-    armedRef.current = true
-    isSendingRef.current = false
-    sessionFinalRef.current = ''
-    speechBufferRef.current = ''
+      armedRef.current = true
+      isSendingRef.current = false
+      sessionFinalRef.current = ''
+      speechBufferRef.current = ''
 
-    const cleanInitial = meaningfulCommand(initialText)
+      const cleanInitial = meaningfulCommand(initialText)
 
-    if (isMeaningfulCommand(cleanInitial)) {
-      isUserSpeakingRef.current = true
-      sessionFinalRef.current = cleanInitial
-      speechBufferRef.current = cleanInitial
-      setLiveTranscript(cleanInitial)
-      setVoiceState('user_speaking')
-      resetSpeechPauseTimer()
-    } else {
-      isUserSpeakingRef.current = false
-      setLiveTranscript('Listening…')
-      setVoiceState('listening')
-      silenceTimerRef.current = setTimeout(() => {
-        if (armedRef.current && !isUserSpeakingRef.current) {
-          armedRef.current = false
-          setLiveTranscript('')
-          recognitionTextRef.current = ''
-          if (listeningRef.current) {
-            setVoiceState('idle')
+      if (isMeaningfulCommand(cleanInitial)) {
+        isUserSpeakingRef.current = true
+        sessionFinalRef.current = cleanInitial
+        speechBufferRef.current = cleanInitial
+        setLiveTranscript(cleanInitial)
+        setVoiceState('user_speaking')
+        resetSpeechPauseTimer()
+      } else {
+        isUserSpeakingRef.current = false
+        setLiveTranscript('Listening…')
+        setVoiceState('listening')
+        silenceTimerRef.current = setTimeout(() => {
+          if (armedRef.current && !isUserSpeakingRef.current) {
+            armedRef.current = false
+            setLiveTranscript('')
+            if (listeningRef.current) {
+              setVoiceState('idle')
+            }
           }
-        }
-      }, WAKE_SILENCE_TIMEOUT_MS)
-    }
-  }, [resetSpeechPauseTimer])
+        }, timeoutMs)
+      }
+    },
+    [resetSpeechPauseTimer],
+  )
+  activateListeningRef.current = activateListening
 
   const startRecognitionSession = useCallback(() => {
     if (!listeningRef.current) return
@@ -454,20 +509,28 @@ export function useNexus() {
         setRawTranscript(currentSpeech)
       }
 
-      // If Nexus is speaking and user speaks, interrupt playback
-      if (speakingRef.current && currentSpeech.length > 0) {
-        window.speechSynthesis?.cancel()
-        fishAudioRef.current?.pause()
-        speakingRef.current = false
-        setSpokenResponse('')
-        setVoiceState('interruption')
+      // If Nexus is speaking, ONLY interrupt if the user explicitly says a wake word ("Hey Nexus", "Hi Access", etc.)
+      if (speakingRef.current) {
+        const wake = extractWakeWord(currentSpeech)
+        if (wake.detected) {
+          if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+          fishAudioRef.current?.pause()
+          speakingRef.current = false
+          resumeOffsetRef.current = 0
+          setSpokenResponse('')
+          setVoiceState('interruption')
+          activateListening(wake.trailingText, WAKE_SILENCE_TIMEOUT_MS)
+          return
+        }
+        // AI is speaking: ignore room noise / mic feedback
+        return
       }
 
       // 1. STANDBY MODE (listening for wake word)
       if (!armedRef.current) {
         const wake = extractWakeWord(currentSpeech)
         if (wake.detected) {
-          activateListening(wake.trailingText)
+          activateListening(wake.trailingText, WAKE_SILENCE_TIMEOUT_MS)
           return
         }
 
@@ -479,13 +542,12 @@ export function useNexus() {
       }
 
       // 2. ARMED / LISTENING MODE (capturing user command)
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current)
-        silenceTimerRef.current = null
-      }
-
       const cleanCommand = stripWakeWord(currentSpeech)
-      if (cleanCommand) {
+      if (isMeaningfulCommand(cleanCommand)) {
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current)
+          silenceTimerRef.current = null
+        }
         isUserSpeakingRef.current = true
         speechBufferRef.current = cleanCommand
         setLiveTranscript(cleanCommand)
@@ -558,6 +620,7 @@ export function useNexus() {
       recognitionActiveRef.current = false
     }
   }, [activateListening, commitCommand, resetSpeechPauseTimer])
+  startRecognitionSessionRef.current = startRecognitionSession
 
   const toggleMic = useCallback(async () => {
     if (micEnabled) {
