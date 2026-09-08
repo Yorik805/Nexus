@@ -38,7 +38,7 @@ const POST_TTS_FOLLOWUP_TIMEOUT_MS = 3_500
 const SPEECH_PAUSE_TIMEOUT_MS = 1_400
 const INTERRUPTION_GRACE_MS = 1_800
 const TTS_RESTART_DELAY_MS = 450
-const RECOGNITION_RESTART_DELAY_MS = 800
+const RECOGNITION_RESTART_DELAY_MS = 300
 const MAX_RECOGNITION_RESTART_ATTEMPTS = 8
 
 function categoryFor(kind: string, source: string, message: string): NexusEvent['category'] {
@@ -190,7 +190,7 @@ export function useNexus() {
   const armedRef = useRef(false)
   const isUserSpeakingRef = useRef(false)
   const speechBufferRef = useRef('')
-  const sessionFinalRef = useRef('')
+  const recognitionTextRef = useRef('')
   const isSendingRef = useRef(false)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const speechPauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -200,11 +200,7 @@ export function useNexus() {
   const interruptionCommandRef = useRef(false)
   const recognitionRestartRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fishAudioRef = useRef<HTMLAudioElement | null>(null)
-  const recognitionStartingRef = useRef(false)
-  const recognitionRestartAttemptsRef = useRef(0)
   const notAllowedRetryRef = useRef(0)
-  const utteranceStartIndexRef = useRef(0)
-  const recognitionActiveRef = useRef(false)
   const activeAbortControllerRef = useRef<AbortController | null>(null)
   const activateListeningRef = useRef<(initialText?: string, timeoutMs?: number) => void>(() => {})
   const startRecognitionSessionRef = useRef<() => void>(() => {})
@@ -255,9 +251,6 @@ export function useNexus() {
       resumeOffsetRef.current = 0
       setSpokenResponse('')
       if (listeningRef.current) {
-        if (!recognitionActiveRef.current) {
-          startRecognitionSessionRef.current()
-        }
         activateListeningRef.current('', POST_TTS_FOLLOWUP_TIMEOUT_MS)
       }
     }
@@ -300,9 +293,6 @@ export function useNexus() {
         setSpokenResponse('')
         URL.revokeObjectURL(audio.src)
         if (listeningRef.current) {
-          if (!recognitionActiveRef.current) {
-            startRecognitionSessionRef.current()
-          }
           activateListeningRef.current('', POST_TTS_FOLLOWUP_TIMEOUT_MS)
         }
       }
@@ -393,8 +383,14 @@ export function useNexus() {
     armedRef.current = false
     isUserSpeakingRef.current = false
     speechBufferRef.current = ''
-    sessionFinalRef.current = ''
-    utteranceStartIndexRef.current = 999999
+    recognitionTextRef.current = ''
+
+    // Stop current recognition session so Chrome starts with a clean buffer in 300ms
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch {}
+    }
 
     if (isMeaningfulCommand(clean)) {
       setLiveTranscript(clean)
@@ -430,14 +426,13 @@ export function useNexus() {
 
       armedRef.current = true
       isSendingRef.current = false
-      sessionFinalRef.current = ''
       speechBufferRef.current = ''
+      recognitionTextRef.current = ''
 
       const cleanInitial = meaningfulCommand(initialText)
 
       if (isMeaningfulCommand(cleanInitial)) {
         isUserSpeakingRef.current = true
-        sessionFinalRef.current = cleanInitial
         speechBufferRef.current = cleanInitial
         setLiveTranscript(cleanInitial)
         setVoiceState('user_speaking')
@@ -453,6 +448,11 @@ export function useNexus() {
             if (listeningRef.current) {
               setVoiceState('idle')
             }
+            if (recognitionRef.current) {
+              try {
+                recognitionRef.current.stop()
+              } catch {}
+            }
           }
         }, timeoutMs)
       }
@@ -463,7 +463,6 @@ export function useNexus() {
 
   const startRecognitionSession = useCallback(() => {
     if (!listeningRef.current) return
-    if (recognitionActiveRef.current) return
 
     if (recognitionRestartRef.current) {
       clearTimeout(recognitionRestartRef.current)
@@ -491,20 +490,19 @@ export function useNexus() {
     recognition.onresult = (event) => {
       notAllowedRetryRef.current = 0
 
-      if (utteranceStartIndexRef.current > event.results.length) {
-        utteranceStartIndexRef.current = 0
-      }
-
-      // Reconstruct the clean, unified speech phrase since current utterance started
-      let currentSpeech = ''
-      for (let i = utteranceStartIndexRef.current; i < event.results.length; i++) {
+      let sessionFinal = ''
+      let sessionInterim = ''
+      for (let i = 0; i < event.results.length; i++) {
         const item = event.results[i]
-        if (item && item[0]) {
-          currentSpeech += (currentSpeech ? ' ' : '') + item[0].transcript.trim()
+        if (!item || !item[0]) continue
+        if (item.isFinal) {
+          sessionFinal += (sessionFinal ? ' ' : '') + item[0].transcript.trim()
+        } else {
+          sessionInterim += (sessionInterim ? ' ' : '') + item[0].transcript.trim()
         }
       }
-      currentSpeech = currentSpeech.trim()
 
+      const currentSpeech = `${sessionFinal} ${sessionInterim}`.trim()
       if (currentSpeech) {
         setRawTranscript(currentSpeech)
       }
@@ -528,15 +526,23 @@ export function useNexus() {
 
       // 1. STANDBY MODE (listening for wake word)
       if (!armedRef.current) {
-        const wake = extractWakeWord(currentSpeech)
+        const accumulated = `${recognitionTextRef.current} ${currentSpeech}`.trim()
+        const wake = extractWakeWord(accumulated)
         if (wake.detected) {
+          recognitionTextRef.current = ''
           activateListening(wake.trailingText, WAKE_SILENCE_TIMEOUT_MS)
           return
         }
 
-        // In standby mode, advance the utterance index once older phrases finalize
-        if (event.results[event.results.length - 1]?.isFinal) {
-          utteranceStartIndexRef.current = event.results.length
+        const wakeDirect = extractWakeWord(currentSpeech)
+        if (wakeDirect.detected) {
+          recognitionTextRef.current = ''
+          activateListening(wakeDirect.trailingText, WAKE_SILENCE_TIMEOUT_MS)
+          return
+        }
+
+        if (sessionFinal.trim()) {
+          recognitionTextRef.current = `${recognitionTextRef.current} ${sessionFinal}`.trim().slice(-100)
         }
         return
       }
@@ -571,8 +577,8 @@ export function useNexus() {
           console.warn(`Speech recognition not-allowed on restart, retrying (${notAllowedRetryRef.current}/3)`)
           if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
           recognitionRestartRef.current = setTimeout(() => {
-            if (listeningRef.current && !recognitionActiveRef.current) startRecognitionSession()
-          }, 800)
+            if (listeningRef.current) startRecognitionSession()
+          }, 600)
           return
         }
 
@@ -590,22 +596,17 @@ export function useNexus() {
     }
 
     recognition.onend = () => {
-      recognitionActiveRef.current = false
       if (!listeningRef.current) return
 
       // If speech was in progress and recognition ended, commit the buffered command
       if (armedRef.current && isUserSpeakingRef.current && speechBufferRef.current.trim()) {
         commitCommand()
+        return
       }
-
-      // Do not restart while Nexus is speaking (prevents feedback loops & chimes)
-      if (speakingRef.current) return
-
-      utteranceStartIndexRef.current = 0
 
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
       recognitionRestartRef.current = setTimeout(() => {
-        if (listeningRef.current && !speakingRef.current && !recognitionActiveRef.current) {
+        if (listeningRef.current) {
           startRecognitionSession()
         }
       }, RECOGNITION_RESTART_DELAY_MS)
@@ -614,10 +615,12 @@ export function useNexus() {
     recognitionRef.current = recognition
     try {
       recognition.start()
-      recognitionActiveRef.current = true
     } catch (err) {
       console.warn('Recognition start warning:', err)
-      recognitionActiveRef.current = false
+      if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
+      recognitionRestartRef.current = setTimeout(() => {
+        if (listeningRef.current) startRecognitionSession()
+      }, RECOGNITION_RESTART_DELAY_MS)
     }
   }, [activateListening, commitCommand, resetSpeechPauseTimer])
   startRecognitionSessionRef.current = startRecognitionSession
@@ -629,8 +632,7 @@ export function useNexus() {
       isUserSpeakingRef.current = false
       isSendingRef.current = false
       speechBufferRef.current = ''
-      sessionFinalRef.current = ''
-      recognitionActiveRef.current = false
+      recognitionTextRef.current = ''
       setVoiceError('')
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
@@ -674,9 +676,8 @@ export function useNexus() {
       isUserSpeakingRef.current = false
       isSendingRef.current = false
       speechBufferRef.current = ''
-      sessionFinalRef.current = ''
       notAllowedRetryRef.current = 0
-      utteranceStartIndexRef.current = 0
+      recognitionTextRef.current = ''
       setRawTranscript('')
       setLiveTranscript('')
       setMicEnabled(true)
@@ -717,7 +718,7 @@ export function useNexus() {
       isUserSpeakingRef.current = false
       isSendingRef.current = false
       speechBufferRef.current = ''
-      sessionFinalRef.current = ''
+      recognitionTextRef.current = ''
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
