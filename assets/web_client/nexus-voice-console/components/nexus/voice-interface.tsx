@@ -11,7 +11,7 @@ import {
   Volume2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { SttMode, VoiceState } from '@/lib/nexus/types'
+import type { VoiceState } from '@/lib/nexus/types'
 import { Waveform } from './waveform'
 
 interface StateConfig {
@@ -42,8 +42,6 @@ export function VoiceInterface({
   onToggleMic,
   micEnabled,
   isStartingMic,
-  sttMode = 'web',
-  onToggleSttMode,
 }: {
   voiceState: VoiceState
   errorMessage?: string
@@ -54,8 +52,6 @@ export function VoiceInterface({
   onToggleMic?: () => void
   micEnabled?: boolean
   isStartingMic?: boolean
-  sttMode?: SttMode
-  onToggleSttMode?: () => void
 }) {
   const cfg = STATE_CONFIG[voiceState]
   const isListening = voiceState === 'listening'
@@ -248,37 +244,6 @@ export function VoiceInterface({
                 {isStartingMic ? 'STARTING MIC…' : 'RETRY MICROPHONE'}
               </button>
             )}
-          </div>
-        )}
-
-        {/* STT Engine toggle switch */}
-        {onToggleSttMode && (
-          <div className="mt-1 flex items-center gap-1.5 rounded-full border border-border/60 bg-card/40 p-1 font-mono text-[10px]">
-            <span className="px-2 text-muted-foreground/70 tracking-wider">STT:</span>
-            <button
-              type="button"
-              onClick={sttMode !== 'web' ? onToggleSttMode : undefined}
-              className={cn(
-                'rounded-full px-2.5 py-0.5 transition-all cursor-pointer',
-                sttMode === 'web'
-                  ? 'bg-primary/25 text-primary font-semibold shadow-[0_0_8px_rgba(var(--primary-rgb),0.2)]'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              WEB
-            </button>
-            <button
-              type="button"
-              onClick={sttMode !== 'server' ? onToggleSttMode : undefined}
-              className={cn(
-                'rounded-full px-2.5 py-0.5 transition-all cursor-pointer',
-                sttMode === 'server'
-                  ? 'bg-primary/25 text-primary font-semibold shadow-[0_0_8px_rgba(var(--primary-rgb),0.2)]'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              SERVER STT
-            </button>
           </div>
         )}
       </div>

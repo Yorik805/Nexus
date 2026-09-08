@@ -1,8 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConnectionState, Interaction, NexusEvent, SttMode, VoiceState } from './types'
-import { calculateRms, downsampleBuffer, encodeWav } from './audio-utils'
+import type { ConnectionState, Interaction, NexusEvent, VoiceState } from './types'
 
 type ApiEvent = { time: string; kind: string; source: string; message: string }
 type ApiState = {
@@ -38,7 +37,7 @@ const WAKE_SILENCE_TIMEOUT_MS = 5_000
 const SPEECH_PAUSE_TIMEOUT_MS = 1_400
 const INTERRUPTION_GRACE_MS = 1_800
 const TTS_RESTART_DELAY_MS = 450
-const RECOGNITION_RESTART_DELAY_MS = 300
+const RECOGNITION_RESTART_DELAY_MS = 800
 const MAX_RECOGNITION_RESTART_ATTEMPTS = 8
 
 function categoryFor(kind: string, source: string, message: string): NexusEvent['category'] {
@@ -164,7 +163,6 @@ export function useNexus() {
   const [lastCommunication, setLastCommunication] = useState(0)
   const [voiceError, setVoiceError] = useState('')
   const [rawTranscript, setRawTranscript] = useState('')
-  const [sttMode, setSttMode] = useState<SttMode>('web')
   
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -185,40 +183,9 @@ export function useNexus() {
   const fishAudioRef = useRef<HTMLAudioElement | null>(null)
   const recognitionStartingRef = useRef(false)
   const recognitionRestartAttemptsRef = useRef(0)
-  const recognitionTextRef = useRef('')
   const notAllowedRetryRef = useRef(0)
-
-  // Server-side STT refs
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null)
-  const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
-  const silentGainRef = useRef<GainNode | null>(null)
-  const pcmRingBufferRef = useRef<Float32Array[]>([])
-  const commandPcmChunksRef = useRef<Float32Array[]>([])
-  const serverTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const isTranscribingRef = useRef(false)
-  const lastVoiceTimeRef = useRef(0)
-  const lastServerSendTimeRef = useRef(0)
-  const recentVoiceDetectedRef = useRef(false)
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('nexus_stt_mode')
-      if (saved === 'web' || saved === 'server') {
-        setSttMode(saved)
-      }
-    }
-  }, [])
-
-  const toggleSttMode = useCallback(() => {
-    setSttMode((prev) => {
-      const next = prev === 'web' ? 'server' : 'web'
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('nexus_stt_mode', next)
-      }
-      return next
-    })
-  }, [])
+  const utteranceStartIndexRef = useRef(0)
+  const recognitionActiveRef = useRef(false)
 
   const addInteraction = useCallback((role: Interaction['role'], text: string) => {
     setInteractions((current) => [...current, { id: `${Date.now()}-${role}`, role, text, timestamp: Date.now() }].slice(-MAX_INTERACTIONS))
@@ -356,7 +323,7 @@ export function useNexus() {
     }
   }, [addInteraction, refresh, speak])
 
-  const commitCommand = useCallback((overrideText?: string) => {
+  const commitCommand = useCallback(() => {
     if (speechPauseTimerRef.current) {
       clearTimeout(speechPauseTimerRef.current)
       speechPauseTimerRef.current = null
@@ -368,15 +335,14 @@ export function useNexus() {
 
     if (isSendingRef.current) return
 
-    const candidate = (overrideText !== undefined ? overrideText : speechBufferRef.current).trim()
+    const candidate = speechBufferRef.current.trim()
     const clean = meaningfulCommand(candidate)
 
     armedRef.current = false
     isUserSpeakingRef.current = false
     speechBufferRef.current = ''
     sessionFinalRef.current = ''
-    recognitionTextRef.current = ''
-    commandPcmChunksRef.current = []
+    utteranceStartIndexRef.current = 999999
 
     if (isMeaningfulCommand(clean)) {
       setLiveTranscript(clean)
@@ -440,271 +406,14 @@ export function useNexus() {
     }
   }, [resetSpeechPauseTimer])
 
-  const stopServerStt = useCallback(() => {
-    if (serverTimerRef.current) {
-      clearInterval(serverTimerRef.current)
-      serverTimerRef.current = null
-    }
-    if (scriptProcessorRef.current) {
-      try {
-        scriptProcessorRef.current.disconnect()
-        scriptProcessorRef.current.onaudioprocess = null
-      } catch {}
-      scriptProcessorRef.current = null
-    }
-    if (mediaStreamSourceRef.current) {
-      try {
-        mediaStreamSourceRef.current.disconnect()
-      } catch {}
-      mediaStreamSourceRef.current = null
-    }
-    if (silentGainRef.current) {
-      try {
-        silentGainRef.current.disconnect()
-      } catch {}
-      silentGainRef.current = null
-    }
-    try {
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        void audioContextRef.current.close()
-      }
-    } catch {}
-    audioContextRef.current = null
-    pcmRingBufferRef.current = []
-    commandPcmChunksRef.current = []
-    isTranscribingRef.current = false
-    recentVoiceDetectedRef.current = false
-  }, [])
-
-  const startServerSttSession = useCallback(() => {
-    if (!listeningRef.current || !streamRef.current) return
-    stopServerStt()
-
-    try {
-      const stream = streamRef.current
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      if (!AudioContextClass) {
-        setVoiceError('Web Audio API is not supported in this browser.')
-        return
-      }
-
-      let audioCtx: AudioContext
-      try {
-        audioCtx = new AudioContextClass({ sampleRate: 16000 })
-      } catch {
-        audioCtx = new AudioContextClass()
-      }
-
-      if (audioCtx.state === 'suspended') {
-        void audioCtx.resume()
-      }
-
-      const source = audioCtx.createMediaStreamSource(stream)
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1)
-
-      const silentGain = audioCtx.createGain()
-      silentGain.gain.value = 0
-
-      processor.onaudioprocess = (e) => {
-        if (!listeningRef.current) return
-        const channelData = e.inputBuffer.getChannelData(0)
-        const samples = downsampleBuffer(channelData, audioCtx.sampleRate, 16000)
-        const rms = calculateRms(samples)
-        const now = Date.now()
-
-        // Sensitive threshold for voice activity detection
-        if (rms > 0.005) {
-          recentVoiceDetectedRef.current = true
-          lastVoiceTimeRef.current = now
-
-          if (speakingRef.current) {
-            window.speechSynthesis?.cancel()
-            fishAudioRef.current?.pause()
-            speakingRef.current = false
-            setVoiceState('interruption')
-          }
-
-          if (armedRef.current && !isUserSpeakingRef.current) {
-            isUserSpeakingRef.current = true
-            setVoiceState('user_speaking')
-            if (silenceTimerRef.current) {
-              clearTimeout(silenceTimerRef.current)
-              silenceTimerRef.current = null
-            }
-          }
-        }
-
-        // Rolling ring buffer for standby wake word (keep last ~3.5s of audio)
-        pcmRingBufferRef.current.push(samples)
-        if (pcmRingBufferRef.current.length > 14) {
-          pcmRingBufferRef.current.shift()
-        }
-
-        // When listening to user command, accumulate all command audio
-        if (armedRef.current) {
-          commandPcmChunksRef.current.push(samples)
-        }
-      }
-
-      source.connect(processor)
-      processor.connect(silentGain)
-      silentGain.connect(audioCtx.destination)
-
-      audioContextRef.current = audioCtx
-      mediaStreamSourceRef.current = source
-      scriptProcessorRef.current = processor
-      silentGainRef.current = silentGain
-
-      // Audio loop: polls every 200ms
-      serverTimerRef.current = setInterval(async () => {
-        if (!listeningRef.current) return
-        const now = Date.now()
-
-        // 1. STANDBY MODE: Wake word detection & live Raw STT stream
-        if (!armedRef.current) {
-          const timeSinceLastSend = now - lastServerSendTimeRef.current
-          const hasRecentVoice = recentVoiceDetectedRef.current || now - lastVoiceTimeRef.current < 2000
-
-          if (timeSinceLastSend >= (hasRecentVoice ? 900 : 2000) && pcmRingBufferRef.current.length > 0) {
-            recentVoiceDetectedRef.current = false
-            if (isTranscribingRef.current) return
-
-            const totalLen = pcmRingBufferRef.current.reduce((acc, c) => acc + c.length, 0)
-            const merged = new Float32Array(totalLen)
-            let offset = 0
-            for (const chunk of pcmRingBufferRef.current) {
-              merged.set(chunk, offset)
-              offset += chunk.length
-            }
-
-            const wavBlob = encodeWav(merged, 16000)
-            lastServerSendTimeRef.current = now
-            isTranscribingRef.current = true
-
-            try {
-              const res = await fetch('/api/stt', {
-                method: 'POST',
-                headers: { 'Content-Type': 'audio/wav' },
-                body: wavBlob,
-              })
-              if (res.ok) {
-                const data = await res.json()
-                const text = String(data.text || '').trim()
-                if (text) {
-                  setRawTranscript(text)
-                  const wake = extractWakeWord(text)
-                  if (wake.detected) {
-                    pcmRingBufferRef.current = []
-                    commandPcmChunksRef.current = []
-                    activateListening(wake.trailingText)
-                  }
-                }
-              }
-            } catch (err) {
-              console.warn('[STT] Standby poll error:', err)
-            } finally {
-              isTranscribingRef.current = false
-            }
-          }
-        }
-        // 2. LISTENING MODE: Transcribing command + detecting silence pause
-        else {
-          const timeSinceVoice = now - lastVoiceTimeRef.current
-          const isSilence = timeSinceVoice >= 1200
-
-          if (isSilence && commandPcmChunksRef.current.length > 0) {
-            // Silence detected: commit command!
-            const totalLen = commandPcmChunksRef.current.reduce((acc, c) => acc + c.length, 0)
-            const merged = new Float32Array(totalLen)
-            let offset = 0
-            for (const chunk of commandPcmChunksRef.current) {
-              merged.set(chunk, offset)
-              offset += chunk.length
-            }
-            commandPcmChunksRef.current = []
-
-            const wavBlob = encodeWav(merged, 16000)
-            isTranscribingRef.current = true
-
-            try {
-              const res = await fetch('/api/stt', {
-                method: 'POST',
-                headers: { 'Content-Type': 'audio/wav' },
-                body: wavBlob,
-              })
-              if (res.ok) {
-                const data = await res.json()
-                const finalText = String(data.text || '').trim()
-                if (finalText) {
-                  setRawTranscript(finalText)
-                  const clean = stripWakeWord(finalText)
-                  commitCommand(clean)
-                } else {
-                  commitCommand()
-                }
-              } else {
-                commitCommand()
-              }
-            } catch {
-              commitCommand()
-            } finally {
-              isTranscribingRef.current = false
-            }
-          } else if (!isSilence && now - lastServerSendTimeRef.current >= 600 && commandPcmChunksRef.current.length > 0) {
-            // Interim command preview while user is speaking
-            if (isTranscribingRef.current) return
-
-            const totalLen = commandPcmChunksRef.current.reduce((acc, c) => acc + c.length, 0)
-            const merged = new Float32Array(totalLen)
-            let offset = 0
-            for (const chunk of commandPcmChunksRef.current) {
-              merged.set(chunk, offset)
-              offset += chunk.length
-            }
-
-            const wavBlob = encodeWav(merged, 16000)
-            lastServerSendTimeRef.current = now
-            isTranscribingRef.current = true
-
-            try {
-              const res = await fetch('/api/stt', {
-                method: 'POST',
-                headers: { 'Content-Type': 'audio/wav' },
-                body: wavBlob,
-              })
-              if (res.ok) {
-                const data = await res.json()
-                const text = String(data.text || '').trim()
-                if (text) {
-                  setRawTranscript(text)
-                  const clean = stripWakeWord(text)
-                  if (clean) {
-                    isUserSpeakingRef.current = true
-                    speechBufferRef.current = clean
-                    setLiveTranscript(clean)
-                    setVoiceState('user_speaking')
-                  }
-                }
-              }
-            } catch (err) {
-              console.warn('[STT] Interim error:', err)
-            } finally {
-              isTranscribingRef.current = false
-            }
-          }
-        }
-      }, 200)
-    } catch (err) {
-      console.error('Server STT startup failed:', err)
-      setVoiceError('Failed to initialize server STT audio capture.')
-    }
-  }, [activateListening, commitCommand, stopServerStt])
-
   const startRecognitionSession = useCallback(() => {
     if (!listeningRef.current) return
-    stopServerStt()
+    if (recognitionActiveRef.current) return
+
+    if (recognitionRestartRef.current) {
+      clearTimeout(recognitionRestartRef.current)
+      recognitionRestartRef.current = null
+    }
 
     if (recognitionRef.current) {
       try {
@@ -726,49 +435,45 @@ export function useNexus() {
 
     recognition.onresult = (event) => {
       notAllowedRetryRef.current = 0
-      let sessionFinal = ''
-      let sessionInterim = ''
-      for (let i = 0; i < event.results.length; i++) {
-        const item = event.results[i]
-        if (item.isFinal) {
-          sessionFinal += (sessionFinal ? ' ' : '') + item[0].transcript.trim()
-        } else {
-          sessionInterim += (sessionInterim ? ' ' : '') + item[0].transcript.trim()
-        }
+
+      if (utteranceStartIndexRef.current > event.results.length) {
+        utteranceStartIndexRef.current = 0
       }
 
-      const transcript = `${sessionFinal} ${sessionInterim}`.trim()
-      if (transcript) {
-        setRawTranscript(transcript)
+      // Reconstruct the clean, unified speech phrase since current utterance started
+      let currentSpeech = ''
+      for (let i = utteranceStartIndexRef.current; i < event.results.length; i++) {
+        const item = event.results[i]
+        if (item && item[0]) {
+          currentSpeech += (currentSpeech ? ' ' : '') + item[0].transcript.trim()
+        }
+      }
+      currentSpeech = currentSpeech.trim()
+
+      if (currentSpeech) {
+        setRawTranscript(currentSpeech)
       }
 
       // If Nexus is speaking and user speaks, interrupt playback
-      if (speakingRef.current && transcript) {
+      if (speakingRef.current && currentSpeech.length > 0) {
         window.speechSynthesis?.cancel()
         fishAudioRef.current?.pause()
         speakingRef.current = false
+        setSpokenResponse('')
         setVoiceState('interruption')
       }
 
       // 1. STANDBY MODE (listening for wake word)
       if (!armedRef.current) {
-        const wake = extractWakeWord(transcript)
+        const wake = extractWakeWord(currentSpeech)
         if (wake.detected) {
-          recognitionTextRef.current = ''
           activateListening(wake.trailingText)
           return
         }
 
-        const accumulated = `${recognitionTextRef.current} ${transcript}`.trim()
-        const wakeAcc = extractWakeWord(accumulated)
-        if (wakeAcc.detected) {
-          recognitionTextRef.current = ''
-          activateListening(wakeAcc.trailingText)
-          return
-        }
-
-        if (sessionFinal) {
-          recognitionTextRef.current = sessionFinal.slice(-80)
+        // In standby mode, advance the utterance index once older phrases finalize
+        if (event.results[event.results.length - 1]?.isFinal) {
+          utteranceStartIndexRef.current = event.results.length
         }
         return
       }
@@ -779,7 +484,7 @@ export function useNexus() {
         silenceTimerRef.current = null
       }
 
-      const cleanCommand = stripWakeWord(transcript)
+      const cleanCommand = stripWakeWord(currentSpeech)
       if (cleanCommand) {
         isUserSpeakingRef.current = true
         speechBufferRef.current = cleanCommand
@@ -793,7 +498,7 @@ export function useNexus() {
       const code = event.error || 'unknown'
       if (code === 'no-speech' || code === 'aborted') return
       if (code === 'network') {
-        setVoiceError('The browser speech service is unavailable. Check your connection or browser settings.')
+        setVoiceError('The browser speech service is temporarily unavailable. Retrying...')
         if (listeningRef.current && !armedRef.current) setVoiceState('idle')
         return
       }
@@ -804,8 +509,8 @@ export function useNexus() {
           console.warn(`Speech recognition not-allowed on restart, retrying (${notAllowedRetryRef.current}/3)`)
           if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
           recognitionRestartRef.current = setTimeout(() => {
-            if (listeningRef.current) startRecognitionSession()
-          }, 600)
+            if (listeningRef.current && !recognitionActiveRef.current) startRecognitionSession()
+          }, 800)
           return
         }
 
@@ -823,6 +528,7 @@ export function useNexus() {
     }
 
     recognition.onend = () => {
+      recognitionActiveRef.current = false
       if (!listeningRef.current) return
 
       // If speech was in progress and recognition ended, commit the buffered command
@@ -830,39 +536,28 @@ export function useNexus() {
         commitCommand()
       }
 
+      // Do not restart while Nexus is speaking (prevents feedback loops & chimes)
+      if (speakingRef.current) return
+
+      utteranceStartIndexRef.current = 0
+
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
       recognitionRestartRef.current = setTimeout(() => {
-        if (listeningRef.current && sttMode === 'web') startRecognitionSession()
+        if (listeningRef.current && !speakingRef.current && !recognitionActiveRef.current) {
+          startRecognitionSession()
+        }
       }, RECOGNITION_RESTART_DELAY_MS)
     }
 
     recognitionRef.current = recognition
     try {
       recognition.start()
+      recognitionActiveRef.current = true
     } catch (err) {
       console.warn('Recognition start warning:', err)
+      recognitionActiveRef.current = false
     }
-  }, [activateListening, commitCommand, resetSpeechPauseTimer, stopServerStt, sttMode])
-
-  useEffect(() => {
-    if (listeningRef.current) {
-      if (sttMode === 'server') {
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.onresult = null
-            recognitionRef.current.onerror = null
-            recognitionRef.current.onend = null
-            recognitionRef.current.stop()
-          } catch {}
-          recognitionRef.current = null
-        }
-        startServerSttSession()
-      } else {
-        stopServerStt()
-        startRecognitionSession()
-      }
-    }
-  }, [sttMode, startRecognitionSession, startServerSttSession, stopServerStt])
+  }, [activateListening, commitCommand, resetSpeechPauseTimer])
 
   const toggleMic = useCallback(async () => {
     if (micEnabled) {
@@ -872,8 +567,8 @@ export function useNexus() {
       isSendingRef.current = false
       speechBufferRef.current = ''
       sessionFinalRef.current = ''
+      recognitionActiveRef.current = false
       setVoiceError('')
-      stopServerStt()
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
       if (recognitionRestartRef.current) clearTimeout(recognitionRestartRef.current)
@@ -901,6 +596,9 @@ export function useNexus() {
         throw new Error('Microphone access requires HTTPS or localhost. If connecting from a tablet or phone, use Tailscale HTTPS or a secure tunnel.')
       }
 
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
+      if (!Recognition) throw new Error('Speech recognition is not supported by this browser. Please use Chrome, Edge, or Safari.')
+
       // KEEP the media stream active while mic is enabled to maintain persistent audio capture permission
       if (navigator.mediaDevices?.getUserMedia) {
         streamRef.current = await navigator.mediaDevices.getUserMedia({
@@ -915,22 +613,15 @@ export function useNexus() {
       speechBufferRef.current = ''
       sessionFinalRef.current = ''
       notAllowedRetryRef.current = 0
-      recognitionTextRef.current = ''
+      utteranceStartIndexRef.current = 0
       setRawTranscript('')
       setLiveTranscript('')
       setMicEnabled(true)
       setVoiceState('idle')
 
-      if (sttMode === 'server') {
-        startServerSttSession()
-      } else {
-        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
-        if (!Recognition) throw new Error('Speech recognition is not supported by this browser. Please switch to Server STT or use Chrome.')
-        startRecognitionSession()
-      }
+      startRecognitionSession()
     } catch (error) {
       console.error('MIC START FAILED:', error)
-      stopServerStt()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
       setVoiceError(error instanceof Error ? error.message : 'Microphone setup failed.')
@@ -940,7 +631,7 @@ export function useNexus() {
     } finally {
       setIsStartingMic(false)
     }
-  }, [micEnabled, startRecognitionSession, startServerSttSession, stopServerStt, sttMode])
+  }, [micEnabled, startRecognitionSession])
 
   const stopSpeaking = useCallback(() => {
     if ('speechSynthesis' in window) window.speechSynthesis.cancel()
@@ -968,7 +659,6 @@ export function useNexus() {
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (speechPauseTimerRef.current) clearTimeout(speechPauseTimerRef.current)
       if (interruptionTimerRef.current) clearTimeout(interruptionTimerRef.current)
-      stopServerStt()
       try {
         if (recognitionRef.current) {
           recognitionRef.current.onresult = null
@@ -983,30 +673,9 @@ export function useNexus() {
       window.speechSynthesis?.cancel()
       fishAudioRef.current?.pause()
     }
-  }, [refresh, stopServerStt])
+  }, [refresh])
 
-  return {
-    connection,
-    micEnabled,
-    isStartingMic,
-    voiceState,
-    voiceError,
-    liveTranscript,
-    spokenResponse,
-    events,
-    interactions,
-    latencyMs,
-    lastCommunication,
-    rawTranscript,
-    sttMode,
-    toggleSttMode,
-    setSttMode,
-    toggleMic,
-    retry,
-    stopSpeaking,
-    triggerInterruption: stopSpeaking,
-    sendText,
-  }
+  return { connection, micEnabled, isStartingMic, voiceState, voiceError, liveTranscript, spokenResponse, events, interactions, latencyMs, lastCommunication, rawTranscript, toggleMic, retry, stopSpeaking, triggerInterruption: stopSpeaking, sendText }
 }
 
 export type NexusClient = ReturnType<typeof useNexus>

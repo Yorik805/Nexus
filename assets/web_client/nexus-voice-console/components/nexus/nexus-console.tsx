@@ -32,8 +32,6 @@ export function NexusConsole() {
         onRetry={nexus.retry}
         onToggleMic={nexus.toggleMic}
         onModeChange={setMode}
-        sttMode={nexus.sttMode}
-        onToggleSttMode={nexus.toggleSttMode}
       />
 
       <main className='flex flex-1 flex-col lg:min-h-0 lg:flex-row'>
@@ -49,8 +47,6 @@ export function NexusConsole() {
               onToggleMic={nexus.toggleMic}
               micEnabled={nexus.micEnabled}
               isStartingMic={nexus.isStartingMic}
-              sttMode={nexus.sttMode}
-              onToggleSttMode={nexus.toggleSttMode}
             />
           </div>
           <InteractionHistory interactions={nexus.interactions} />
