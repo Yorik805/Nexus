@@ -4,10 +4,10 @@ Use this guide on the Ubuntu server at `~/Nexus`.
 
 ## One-command setup or update
 
-Run this on `y-core` to pull the latest code, install/build the voice console, auto-start the runtime, dashboard backend, and voice console, and configure persistent HTTPS through Tailscale:
+Run this on `y-core` to pull the latest code, check/install all Python and Node dependencies, auto-generate SSL certs if needed, build the voice console, and start/restart all 3 services (Nexus core, debugging dashboard, voice console):
 
 ```bash
-cd ~/Nexus && git pull origin main && bash ./scripts/install-voice-console-service.sh && sudo tailscale serve --bg http://127.0.0.1:3001 && tailscale serve status
+cd ~/Nexus && git pull origin main && bash start.sh
 ```
 
 If Tailscale is not installed yet, run this once first:
