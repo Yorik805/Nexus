@@ -11,7 +11,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.nexus.voice.config.NexusPreferences
 import com.nexus.voice.engine.VoskSpeechManager
+import com.nexus.voice.network.NexusApiClient
 import com.nexus.voice.state.VoiceState
 import com.nexus.voice.state.VoiceUiState
 import com.nexus.voice.ui.VoiceScreen
@@ -20,6 +22,8 @@ import com.nexus.voice.ui.theme.NexusVoiceTheme
 class MainActivity : ComponentActivity() {
 
     private lateinit var speechManager: VoskSpeechManager
+    private lateinit var prefs: NexusPreferences
+    private val apiClient = NexusApiClient()
 
     private var uiState by mutableStateOf(VoiceUiState())
 
@@ -42,6 +46,13 @@ class MainActivity : ComponentActivity() {
         // Always keep the tablet display on while plugged in / running
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        prefs = NexusPreferences(this)
+        uiState = uiState.copy(
+            serverIp = prefs.serverIp,
+            isZenMode = prefs.isZenMode,
+            isDebugMode = prefs.isDebugMode
+        )
+
         speechManager = VoskSpeechManager(
             context = this,
             onStateChanged = { state, msg ->
@@ -63,8 +74,14 @@ class MainActivity : ComponentActivity() {
             },
             onRawTranscript = { raw ->
                 uiState = uiState.copy(rawTranscript = raw)
+            },
+            onAudioLevel = { level ->
+                uiState = uiState.copy(audioLevel = level)
             }
         )
+
+        // Start polling Nexus backend
+        startBackendPolling(prefs.serverIp)
 
         setContent {
             NexusVoiceTheme {
@@ -76,12 +93,56 @@ class MainActivity : ComponentActivity() {
                         } else {
                             checkPermissionAndStart()
                         }
+                    },
+                    onToggleZenMode = {
+                        val next = !uiState.isZenMode
+                        prefs.isZenMode = next
+                        uiState = uiState.copy(isZenMode = next)
+                    },
+                    onToggleDebugMode = {
+                        val next = !uiState.isDebugMode
+                        prefs.isDebugMode = next
+                        uiState = uiState.copy(isDebugMode = next)
+                    },
+                    onOpenSettings = {
+                        uiState = uiState.copy(showSettingsDialog = true)
+                    },
+                    onDismissSettings = {
+                        uiState = uiState.copy(showSettingsDialog = false)
+                    },
+                    onSaveServerIp = { newIp ->
+                        prefs.serverIp = newIp
+                        uiState = uiState.copy(serverIp = newIp)
+                        startBackendPolling(newIp)
+                    },
+                    onTestPing = { ip, port ->
+                        apiClient.testConnection(ip, port)
+                    },
+                    onToggleAutoScroll = {
+                        uiState = uiState.copy(autoScrollEvents = !uiState.autoScrollEvents)
+                    },
+                    onSelectCategory = { cat ->
+                        uiState = uiState.copy(selectedCategoryFilter = cat)
                     }
                 )
             }
         }
 
         checkPermissionAndStart()
+    }
+
+    private fun startBackendPolling(ip: String) {
+        apiClient.startPolling(
+            serverIp = ip,
+            port = prefs.dashboardPort,
+            intervalMs = 1500L
+        ) { success, latency, events ->
+            uiState = uiState.copy(
+                isServerConnected = success,
+                serverLatencyMs = latency,
+                events = if (events.isNotEmpty()) events else uiState.events
+            )
+        }
     }
 
     private fun checkPermissionAndStart() {
@@ -96,5 +157,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         speechManager.release()
+        apiClient.release()
     }
 }
