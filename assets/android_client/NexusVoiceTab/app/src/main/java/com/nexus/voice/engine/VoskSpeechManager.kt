@@ -19,7 +19,8 @@ class VoskSpeechManager(
     private val context: Context,
     private val onStateChanged: (VoiceState, String) -> Unit,
     private val onPartialTranscript: (String) -> Unit,
-    private val onFinalTranscript: (String) -> Unit
+    private val onFinalTranscript: (String) -> Unit,
+    private val onRawTranscript: (String) -> Unit = {}
 ) : RecognitionListener {
 
     private val TAG = "VoskSpeechManager"
@@ -154,6 +155,10 @@ class VoskSpeechManager(
         val partial = parseText(hypothesis, "partial")
         if (partial.isBlank()) return
 
+        mainHandler.post {
+            onRawTranscript(partial)
+        }
+
         if (!isArmed) {
             val wake = WakeWordDetector.detect(partial)
             if (wake.isDetected) {
@@ -180,6 +185,10 @@ class VoskSpeechManager(
     override fun onResult(hypothesis: String?) {
         val text = parseText(hypothesis, "text")
         if (text.isBlank()) return
+
+        mainHandler.post {
+            onRawTranscript(text)
+        }
 
         if (isArmed) {
             cancelSilenceTimer()

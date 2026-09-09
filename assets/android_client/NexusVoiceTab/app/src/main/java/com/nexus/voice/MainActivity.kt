@@ -60,6 +60,9 @@ class MainActivity : ComponentActivity() {
                     currentPartial = "",
                     transcriptHistory = updatedHistory.take(5)
                 )
+            },
+            onRawTranscript = { raw ->
+                uiState = uiState.copy(rawTranscript = raw)
             }
         )
 
