@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.nexus.voice.state.VoiceState
+import android.content.res.AssetManager
+import java.io.File
 import java.io.IOException
 import org.json.JSONObject
 import org.vosk.Model
@@ -44,24 +46,65 @@ class VoskSpeechManager(
                 try {
                     recognizer = Recognizer(model, SAMPLE_RATE)
                     speechService = SpeechService(recognizer, SAMPLE_RATE)
-                    Log.d(TAG, "Vosk model successfully loaded.")
+                    Log.d(TAG, "Vosk model successfully loaded via StorageService.")
                     mainHandler.post {
                         onStateChanged(VoiceState.STANDBY, "Engine Ready. Say 'Hey Nexus' or 'Hi Acces'")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize Vosk recognizer", e)
-                    mainHandler.post {
-                        onStateChanged(VoiceState.ERROR, "Recognizer init error: ${e.localizedMessage}")
-                    }
+                    Log.e(TAG, "Failed to initialize Vosk recognizer, trying internal fallback", e)
+                    initModelInternalFallback()
                 }
             },
             { exception: IOException ->
-                Log.e(TAG, "StorageService failed to unpack model", exception)
-                mainHandler.post {
-                    onStateChanged(VoiceState.ERROR, "Failed to unpack model: ${exception.localizedMessage}")
-                }
+                Log.w(TAG, "StorageService unpack failed, trying internal fallback: ${exception.localizedMessage}")
+                initModelInternalFallback()
             }
         )
+    }
+
+    private fun initModelInternalFallback() {
+        Thread {
+            try {
+                val targetDir = File(context.filesDir, MODEL_NAME)
+                val acousticModel = File(targetDir, "am/final.mdl")
+                if (!acousticModel.exists()) {
+                    targetDir.mkdirs()
+                    copyAssetFolder(context.assets, MODEL_NAME, targetDir)
+                }
+                val model = Model(targetDir.absolutePath)
+                recognizer = Recognizer(model, SAMPLE_RATE)
+                speechService = SpeechService(recognizer, SAMPLE_RATE)
+                Log.d(TAG, "Vosk model successfully loaded via internal fallback.")
+                mainHandler.post {
+                    onStateChanged(VoiceState.STANDBY, "Engine Ready. Say 'Hey Nexus' or 'Hi Acces'")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Both StorageService and internal fallback failed", e)
+                mainHandler.post {
+                    onStateChanged(VoiceState.ERROR, "Model unpack failed: ${e.localizedMessage}")
+                }
+            }
+        }.start()
+    }
+
+    private fun copyAssetFolder(assetManager: AssetManager, sourcePath: String, targetDir: File) {
+        val files = assetManager.list(sourcePath) ?: return
+        if (!targetDir.exists()) targetDir.mkdirs()
+
+        for (file in files) {
+            val sourceChild = if (sourcePath.isEmpty()) file else "$sourcePath/$file"
+            val targetChild = File(targetDir, file)
+            val subFiles = assetManager.list(sourceChild)
+            if (!subFiles.isNullOrEmpty()) {
+                copyAssetFolder(assetManager, sourceChild, targetChild)
+            } else {
+                assetManager.open(sourceChild).use { input ->
+                    targetChild.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+        }
     }
 
     fun startListening() {
