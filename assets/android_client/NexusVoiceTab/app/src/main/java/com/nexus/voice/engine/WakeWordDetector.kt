@@ -7,8 +7,12 @@ data class WakeResult(
 
 object WakeWordDetector {
 
-    private val PREFIXES = setOf("hey", "hi", "hello", "ok")
-    private val TARGETS = setOf("nexus", "acces", "access")
+    private val PREFIXES = setOf("hey", "hi", "hello", "ok", "a", "the")
+    // Acoustic and phonetic variants commonly recognized by Kaldi for "nexus" and "acces"
+    private val TARGETS = setOf(
+        "nexus", "nexas", "nexis", "nexes", "texas", "lexus",
+        "acces", "access", "axis", "excess", "axes"
+    )
 
     fun isWakeTarget(word: String): Boolean {
         val clean = word.lowercase().replace(Regex("[^a-z]"), "")
@@ -22,7 +26,7 @@ object WakeWordDetector {
         for (i in words.indices) {
             val word = words[i].lowercase().replace(Regex("[^a-z]"), "")
 
-            // Case 1: "hey nexus", "hi acces", etc.
+            // Case 1: "hey nexus", "hi acces", "ok nexus", etc.
             if (word in PREFIXES && i + 1 < words.size) {
                 val nextWord = words[i + 1].lowercase().replace(Regex("[^a-z]"), "")
                 if (isWakeTarget(nextWord)) {
@@ -31,7 +35,7 @@ object WakeWordDetector {
                 }
             }
 
-            // Case 2: "nexus", "acces", etc. (direct)
+            // Case 2: "nexus", "acces", etc. (direct single-word wake)
             if (isWakeTarget(word)) {
                 val trailing = words.drop(i + 1).joinToString(" ").trim()
                 return WakeResult(true, trailing)

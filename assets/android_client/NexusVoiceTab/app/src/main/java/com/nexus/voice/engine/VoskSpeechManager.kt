@@ -53,7 +53,15 @@ class VoskSpeechManager(
             { loadedModel: Model ->
                 try {
                     model = loadedModel
-                    recognizer = Recognizer(loadedModel, SAMPLE_RATE)
+                    recognizer = Recognizer(loadedModel, SAMPLE_RATE).apply {
+                        setWords(true)
+                        setPartialWords(true)
+                        try {
+                            setEndpointerDelays(0.8f, 0.4f, 1.2f)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Endpointer delays configuration notice: ${e.message}")
+                        }
+                    }
                     Log.d(TAG, "Vosk model successfully loaded via StorageService.")
                     mainHandler.post {
                         onStateChanged(VoiceState.STANDBY, "Engine Ready. Say 'Hey Nexus' or 'Hi Acces'")
@@ -81,7 +89,15 @@ class VoskSpeechManager(
                 }
                 val loadedModel = Model(targetDir.absolutePath)
                 model = loadedModel
-                recognizer = Recognizer(loadedModel, SAMPLE_RATE)
+                recognizer = Recognizer(loadedModel, SAMPLE_RATE).apply {
+                    setWords(true)
+                    setPartialWords(true)
+                    try {
+                        setEndpointerDelays(0.8f, 0.4f, 1.2f)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Endpointer delays configuration notice: ${e.message}")
+                    }
+                }
                 Log.d(TAG, "Vosk model successfully loaded via internal fallback.")
                 mainHandler.post {
                     onStateChanged(VoiceState.STANDBY, "Engine Ready. Say 'Hey Nexus' or 'Hi Acces'")
