@@ -6,7 +6,7 @@ import com.nexus.voice.model.NexusEvent
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -14,6 +14,7 @@ class NexusApiClient {
 
     private val TAG = "NexusApiClient"
     private var pollingJob: Job? = null
+    private var activeMessageJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun startPolling(
@@ -83,6 +84,100 @@ class NexusApiClient {
         }
     }
 
+    suspend fun sendMessage(
+        serverIp: String,
+        runtimePort: Int,
+        text: String,
+        deviceId: String = "nexus-voice-tab"
+    ): Result<String> = withContext(Dispatchers.IO) {
+        // Cut off previous in-flight request if a new one is sent
+        activeMessageJob?.cancel()
+
+        val cleanIp = serverIp.trim().removePrefix("http://").removePrefix("https://").removeSuffix("/")
+        val urlStr = "http://$cleanIp:$runtimePort/message"
+
+        var connection: HttpURLConnection? = null
+        try {
+            val url = URL(urlStr)
+            val jsonPayload = JSONObject().apply {
+                put("device_id", deviceId)
+                put("text", text)
+            }.toString()
+
+            Log.d(TAG, "Sending message to $urlStr: $text")
+
+            connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 5000
+                readTimeout = 35000 // LLM inference may take several seconds
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "application/json")
+                doOutput = true
+                useCaches = false
+            }
+
+            connection.outputStream.use { os ->
+                os.write(jsonPayload.toByteArray(Charsets.UTF_8))
+                os.flush()
+            }
+
+            val responseCode = connection.responseCode
+            Log.d(TAG, "Message response code: $responseCode")
+
+            if (responseCode in 200..299) {
+                val responseText = connection.inputStream.bufferedReader().use(BufferedReader::readText)
+                Log.d(TAG, "Message response body: $responseText")
+                val reply = extractReplyText(responseText)
+                Result.success(reply)
+            } else {
+                val errText = connection.errorStream?.bufferedReader()?.use(BufferedReader::readText) ?: "HTTP $responseCode"
+                Result.failure(IOException("Server returned $responseCode: $errText"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send message to Nexus", e)
+            Result.failure(e)
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    private fun extractReplyText(jsonString: String): String {
+        try {
+            val root = JSONObject(jsonString)
+
+            // 1. Check pending_messages list
+            val pendingArray = root.optJSONArray("pending_messages") ?: root.optJSONArray("pending")
+            if (pendingArray != null && pendingArray.length() > 0) {
+                for (i in 0 until pendingArray.length()) {
+                    val item = pendingArray.optJSONObject(i) ?: continue
+                    val directMsg = item.optString("message", "")
+                    if (directMsg.isNotBlank()) return directMsg
+
+                    val event = item.optJSONObject("event")
+                    if (event != null) {
+                        val data = event.optJSONObject("data")
+                        val dataMsg = data?.optString("message", "") ?: data?.optString("text", "")
+                        if (!dataMsg.isNullOrBlank()) return dataMsg
+                    }
+                }
+            }
+
+            // 2. Check result.response.text
+            val result = root.optJSONObject("result") ?: root
+            val response = result.optJSONObject("response") ?: result
+            val text = response.optString("text", "")
+            if (text.isNotBlank()) return text
+
+            val msg = result.optString("message", "")
+            if (msg.isNotBlank()) return msg
+
+            return root.optString("message", "")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to extract reply text", e)
+            return ""
+        }
+    }
+
     private fun parseEvents(jsonString: String): List<NexusEvent> {
         val result = mutableListOf<NexusEvent>()
         try {
@@ -122,6 +217,7 @@ class NexusApiClient {
 
     fun release() {
         stopPolling()
+        activeMessageJob?.cancel()
         scope.cancel()
     }
 }

@@ -3,6 +3,8 @@ package com.nexus.voice
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,12 +20,20 @@ import com.nexus.voice.state.VoiceState
 import com.nexus.voice.state.VoiceUiState
 import com.nexus.voice.ui.VoiceScreen
 import com.nexus.voice.ui.theme.NexusVoiceTheme
+import kotlinx.coroutines.*
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+
+    private val TAG = "MainActivity"
 
     private lateinit var speechManager: VoskSpeechManager
     private lateinit var prefs: NexusPreferences
     private val apiClient = NexusApiClient()
+
+    private var tts: TextToSpeech? = null
+    private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var inFlightMessageJob: Job? = null
 
     private var uiState by mutableStateOf(VoiceUiState())
 
@@ -53,9 +63,16 @@ class MainActivity : ComponentActivity() {
             isDebugMode = prefs.isDebugMode
         )
 
+        // Initialize Android Text-to-Speech
+        initTts()
+
         speechManager = VoskSpeechManager(
             context = this,
             onStateChanged = { state, msg ->
+                // If user triggered wake word while TTS is speaking, interrupt TTS immediately
+                if (state == VoiceState.LISTENING || state == VoiceState.WAKE_DETECTED) {
+                    stopTts()
+                }
                 uiState = uiState.copy(
                     voiceState = state,
                     statusMessage = msg,
@@ -66,11 +83,7 @@ class MainActivity : ComponentActivity() {
                 uiState = uiState.copy(currentPartial = partial)
             },
             onFinalTranscript = { finalPhrase ->
-                val updatedHistory = listOf(finalPhrase) + uiState.transcriptHistory
-                uiState = uiState.copy(
-                    currentPartial = "",
-                    transcriptHistory = updatedHistory.take(5)
-                )
+                handleSpokenCommand(finalPhrase)
             },
             onRawTranscript = { raw ->
                 uiState = uiState.copy(rawTranscript = raw)
@@ -131,6 +144,73 @@ class MainActivity : ComponentActivity() {
         checkPermissionAndStart()
     }
 
+    private fun handleSpokenCommand(finalPhrase: String) {
+        val clean = finalPhrase.trim()
+        if (clean.isBlank()) return
+
+        // 1. Cut off any active TTS playback immediately
+        stopTts()
+
+        // 2. Cut off previous in-flight sending job if user speaks a new command
+        inFlightMessageJob?.cancel()
+
+        // 3. Immediately display user's command in the floating dialogue
+        val updatedHistory = listOf(clean) + uiState.transcriptHistory
+        uiState = uiState.copy(
+            currentPartial = "",
+            statusMessage = "Sending to Nexus: \"$clean\"…",
+            transcriptHistory = updatedHistory.take(8)
+        )
+
+        // 4. POST the message to Nexus runtime (/message)
+        inFlightMessageJob = activityScope.launch {
+            val result = apiClient.sendMessage(
+                serverIp = prefs.serverIp,
+                runtimePort = prefs.runtimePort,
+                text = clean
+            )
+
+            result.onSuccess { replyText ->
+                if (replyText.isNotBlank()) {
+                    val withReply = listOf(replyText) + uiState.transcriptHistory
+                    uiState = uiState.copy(
+                        statusMessage = "Nexus responded.",
+                        transcriptHistory = withReply.take(8)
+                    )
+                    speakTts(replyText)
+                } else {
+                    uiState = uiState.copy(statusMessage = "Command executed by Nexus.")
+                }
+            }.onFailure { err ->
+                Log.w(TAG, "Failed to reach Nexus server", err)
+                uiState = uiState.copy(
+                    statusMessage = "Server error: ${err.localizedMessage ?: "Unreachable"}"
+                )
+            }
+        }
+    }
+
+    private fun initTts() {
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.ENGLISH
+                Log.d(TAG, "Android TextToSpeech initialized successfully.")
+            } else {
+                Log.w(TAG, "Failed to initialize Android TextToSpeech.")
+            }
+        }
+    }
+
+    private fun speakTts(text: String) {
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nexus_voice_reply")
+    }
+
+    private fun stopTts() {
+        if (tts?.isSpeaking == true) {
+            tts?.stop()
+        }
+    }
+
     private fun startBackendPolling(ip: String) {
         apiClient.startPolling(
             serverIp = ip,
@@ -156,6 +236,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopTts()
+        tts?.shutdown()
+        tts = null
+        activityScope.cancel()
         speechManager.release()
         apiClient.release()
     }
