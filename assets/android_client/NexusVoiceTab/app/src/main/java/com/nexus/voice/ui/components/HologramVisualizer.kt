@@ -30,9 +30,10 @@ fun HologramVisualizer(
     voiceState: VoiceState,
     audioLevel: Float,
     modifier: Modifier = Modifier,
-    size: Dp = 220.dp
+    size: Dp = 230.dp
 ) {
     val isListening = voiceState == VoiceState.LISTENING || voiceState == VoiceState.WAKE_DETECTED
+    val isWakeBurst = voiceState == VoiceState.WAKE_DETECTED
 
     // Smooth physics-based spring animation on voice volume
     val smoothedLevel by animateFloatAsState(
@@ -46,23 +47,27 @@ fun HologramVisualizer(
 
     val infiniteTransition = rememberInfiniteTransition(label = "hologramCore")
 
-    // Primary clockwise rotation
+    // Rotation speeds: vortex burst during wake detection
+    val primarySpeed = when {
+        isWakeBurst -> 800
+        isListening -> 3500
+        else -> 10000
+    }
     val primaryRotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isListening) 4000 else 12000, easing = LinearEasing),
+            animation = tween(durationMillis = primarySpeed, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "primaryRotation"
     )
 
-    // Counter-clockwise orbital rotation
     val counterRotation by infiniteTransition.animateFloat(
         initialValue = 360f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isListening) 5500 else 16000, easing = LinearEasing),
+            animation = tween(durationMillis = if (isWakeBurst) 1100 else if (isListening) 4800 else 14000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "counterRotation"
@@ -73,7 +78,7 @@ fun HologramVisualizer(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isListening) 1600 else 4000, easing = LinearEasing),
+            animation = tween(durationMillis = if (isListening) 1200 else 3600, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "wavePhase"
@@ -81,16 +86,27 @@ fun HologramVisualizer(
 
     // Idle organic breathing
     val idleBreathe by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.04f,
+        initialValue = 0.95f,
+        targetValue = 1.05f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "idleBreathe"
     )
 
-    // Dynamic color assignment
+    // Wake Shockwave Ring (expands continuously during wake or listening)
+    val shockwaveProgress by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (isWakeBurst) 600 else if (isListening) 1400 else 2800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shockwaveProgress"
+    )
+
+    // Dynamic color theme based on voice state
     val primaryColor = when (voiceState) {
         VoiceState.WAKE_DETECTED -> ElectricMagenta
         VoiceState.LISTENING -> if (smoothedLevel > 0.45f) AccentGreen else NeonCyan
@@ -101,7 +117,7 @@ fun HologramVisualizer(
     val secondaryColor = when (voiceState) {
         VoiceState.WAKE_DETECTED -> Color.White
         VoiceState.LISTENING -> ElectricMagenta
-        else -> Color(0xFF4F46E5) // Electric Indigo
+        else -> Color(0xFF38BDF8) // Sky Blue
     }
 
     Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
@@ -109,56 +125,70 @@ fun HologramVisualizer(
             val center = Offset(size.toPx() / 2f, size.toPx() / 2f)
             val maxRadius = size.toPx() / 2f
 
-            val baseRadius = maxRadius * 0.55f * idleBreathe
-            val activeBoost = smoothedLevel * 0.35f
+            val baseRadius = maxRadius * 0.52f * idleBreathe
+            val activeBoost = smoothedLevel * 0.38f
 
-            // 1. Outer Tech Reticle Ticks (60 precision radial tick marks)
-            val totalTicks = 60
+            // 0. Shockwave Warp Ring (Fires outward during wake word / listening)
+            val shockwaveR = maxRadius * shockwaveProgress
+            val shockwaveAlpha = (1f - (shockwaveProgress - 0.4f) / 0.85f).coerceIn(0f, 1f) * if (isWakeBurst) 0.85f else if (isListening) 0.45f else 0.15f
+            drawCircle(
+                color = primaryColor.copy(alpha = shockwaveAlpha),
+                radius = shockwaveR,
+                center = center,
+                style = Stroke(width = if (isWakeBurst) 3.5.dp.toPx() else 1.5.dp.toPx())
+            )
+
+            // 1. Outer Tech Reticle Ticks (64 precision radial gauge tick marks)
+            val totalTicks = 64
             for (i in 0 until totalTicks) {
                 val angleDeg = i * (360f / totalTicks)
                 val angleRad = angleDeg * (PI / 180f).toFloat()
 
-                val isMajor = i % 5 == 0
-                val tickLen = if (isMajor) 7.dp.toPx() else 3.5.dp.toPx()
-                val tickStartR = maxRadius * 0.90f
+                val isCardinal = i % 16 == 0
+                val isMajor = i % 4 == 0
+                val tickLen = if (isCardinal) 10.dp.toPx() else if (isMajor) 6.dp.toPx() else 3.dp.toPx()
+                val tickStartR = maxRadius * 0.88f
                 val tickEndR = tickStartR + tickLen
 
                 val p1 = Offset(center.x + tickStartR * cos(angleRad), center.y + tickStartR * sin(angleRad))
                 val p2 = Offset(center.x + tickEndR * cos(angleRad), center.y + tickEndR * sin(angleRad))
 
                 drawLine(
-                    color = if (isMajor) primaryColor.copy(alpha = 0.6f) else TextSecondary.copy(alpha = 0.25f),
+                    color = when {
+                        isCardinal -> if (isListening) Color.White else primaryColor
+                        isMajor -> primaryColor.copy(alpha = 0.7f)
+                        else -> TextSecondary.copy(alpha = 0.2f)
+                    },
                     start = p1,
                     end = p2,
-                    strokeWidth = if (isMajor) 1.5.dp.toPx() else 1.dp.toPx(),
+                    strokeWidth = if (isCardinal) 2.dp.toPx() else if (isMajor) 1.5.dp.toPx() else 1.dp.toPx(),
                     cap = StrokeCap.Round
                 )
             }
 
             // 2. Segmented Outer Gyro Arc (Clockwise)
             rotate(primaryRotation, center) {
-                val gyroRadius = maxRadius * 0.82f
-                // Draw 3 segmented arcs
+                val gyroRadius = maxRadius * 0.80f
                 for (arcIndex in 0..2) {
                     drawArc(
                         brush = Brush.sweepGradient(
-                            listOf(primaryColor.copy(alpha = 0.9f), Color.Transparent, primaryColor.copy(alpha = 0.9f))
+                            listOf(primaryColor, Color.Transparent, primaryColor)
                         ),
-                        startAngle = arcIndex * 120f + 10f,
-                        sweepAngle = 90f,
+                        startAngle = arcIndex * 120f + 15f,
+                        sweepAngle = 80f,
                         useCenter = false,
                         topLeft = Offset(center.x - gyroRadius, center.y - gyroRadius),
                         size = Size(gyroRadius * 2f, gyroRadius * 2f),
-                        style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                        style = Stroke(width = if (isWakeBurst) 3.dp.toPx() else 2.dp.toPx(), cap = StrokeCap.Round)
                     )
                 }
 
-                // 3 Satellite node beacons
+                // Satellite glowing beacons
                 for (arcIndex in 0..2) {
-                    val satAngle = (arcIndex * 120f + 10f) * (PI / 180f).toFloat()
+                    val satAngle = (arcIndex * 120f + 15f) * (PI / 180f).toFloat()
                     drawCircle(
                         color = Color.White,
-                        radius = 2.5.dp.toPx(),
+                        radius = (3.dp.toPx() + smoothedLevel * 3.dp.toPx()),
                         center = Offset(center.x + gyroRadius * cos(satAngle), center.y + gyroRadius * sin(satAngle))
                     )
                 }
@@ -166,32 +196,31 @@ fun HologramVisualizer(
 
             // 3. Counter-Rotating Dashed Compass Ring
             rotate(counterRotation, center) {
-                val compassRadius = maxRadius * 0.70f
+                val compassRadius = maxRadius * 0.68f
                 drawCircle(
-                    color = secondaryColor.copy(alpha = 0.45f),
+                    color = secondaryColor.copy(alpha = if (isWakeBurst) 0.8f else 0.5f),
                     radius = compassRadius,
                     center = center,
                     style = Stroke(
-                        width = 1.2.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
+                        width = 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(16f, 12f), 0f)
                     )
                 )
             }
 
-            // 4. RADIAL 360° EQUALIZER SPECTRUM (54 radial audio frequency bars)
-            val numBars = 54
-            val eqBaseRadius = baseRadius * 0.92f
+            // 4. RADIAL 360° EQUALIZER SPECTRUM (56 radial audio frequency bars)
+            val numBars = 56
+            val eqBaseRadius = baseRadius * 0.88f
 
             for (i in 0 until numBars) {
                 val angleDeg = i * (360f / numBars)
                 val angleRad = angleDeg * (PI / 180f).toFloat()
 
-                // Harmonic ripple formula
                 val waveVal = sin((i * 4f + wavePhase) * (PI / 180f).toFloat())
                 val dynamicBarHeight = if (isListening) {
-                    (4.dp.toPx() + (smoothedLevel * 28.dp.toPx() * (0.35f + 0.65f * abs(waveVal))))
+                    (5.dp.toPx() + (smoothedLevel * 34.dp.toPx() * (0.35f + 0.65f * abs(waveVal))))
                 } else {
-                    (2.5.dp.toPx() + (2.5.dp.toPx() * (0.5f + 0.5f * waveVal)))
+                    (3.dp.toPx() + (3.dp.toPx() * (0.5f + 0.5f * waveVal)))
                 }
 
                 val barStartR = eqBaseRadius
@@ -200,7 +229,6 @@ fun HologramVisualizer(
                 val startP = Offset(center.x + barStartR * cos(angleRad), center.y + barStartR * sin(angleRad))
                 val endP = Offset(center.x + barEndR * cos(angleRad), center.y + barEndR * sin(angleRad))
 
-                // Radial frequency bar line
                 drawLine(
                     brush = Brush.linearGradient(
                         colors = listOf(primaryColor, secondaryColor),
@@ -209,27 +237,27 @@ fun HologramVisualizer(
                     ),
                     start = startP,
                     end = endP,
-                    strokeWidth = 2.dp.toPx(),
+                    strokeWidth = (2.2.dp.toPx() + smoothedLevel * 1.5.dp.toPx()),
                     cap = StrokeCap.Round
                 )
 
-                // Glowing neon tip dot when active
-                if (isListening && dynamicBarHeight > 8.dp.toPx()) {
+                // Tip firefly beacons on speech peaks
+                if (isListening && dynamicBarHeight > 9.dp.toPx()) {
                     drawCircle(
                         color = Color.White,
-                        radius = 1.8.dp.toPx(),
+                        radius = (1.8.dp.toPx() + smoothedLevel * 2.dp.toPx()),
                         center = endP
                     )
                 }
             }
 
-            // 5. Sound-Reactive Plasma Aura (Radial Gradient)
-            val auraRadius = baseRadius * (1.1f + activeBoost)
+            // 5. Sound-Reactive Plasma Aura (Radial Glow)
+            val auraRadius = baseRadius * (1.15f + activeBoost)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        primaryColor.copy(alpha = 0.35f + smoothedLevel * 0.45f),
-                        secondaryColor.copy(alpha = 0.15f + smoothedLevel * 0.25f),
+                        primaryColor.copy(alpha = if (isWakeBurst) 0.65f else 0.38f + smoothedLevel * 0.45f),
+                        secondaryColor.copy(alpha = if (isWakeBurst) 0.35f else 0.18f + smoothedLevel * 0.25f),
                         Color.Transparent
                     ),
                     center = center,
@@ -240,27 +268,42 @@ fun HologramVisualizer(
             )
 
             // 6. High-Energy Quantum Core (Central Glowing Orb)
-            val coreRadius = (10.dp.toPx() + smoothedLevel * 14.dp.toPx())
+            val coreRadius = (12.dp.toPx() + smoothedLevel * 16.dp.toPx() + if (isWakeBurst) 8.dp.toPx() else 0.dp.toPx())
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
                         Color.White,
                         primaryColor,
-                        secondaryColor.copy(alpha = 0.4f),
+                        secondaryColor.copy(alpha = 0.5f),
                         Color.Transparent
                     ),
                     center = center,
-                    radius = coreRadius * 1.8f
+                    radius = coreRadius * 1.9f
                 ),
-                radius = coreRadius * 1.8f,
+                radius = coreRadius * 1.9f,
                 center = center
             )
 
-            // Center solid bright node
+            // Center bright cyber-reticle
             drawCircle(
                 color = Color.White,
-                radius = coreRadius * 0.55f,
+                radius = coreRadius * 0.52f,
                 center = center
+            )
+
+            // Crosshair inside core
+            val crossSize = 5.dp.toPx()
+            drawLine(
+                color = primaryColor,
+                start = Offset(center.x - crossSize, center.y),
+                end = Offset(center.x + crossSize, center.y),
+                strokeWidth = 1.5.dp.toPx()
+            )
+            drawLine(
+                color = primaryColor,
+                start = Offset(center.x, center.y - crossSize),
+                end = Offset(center.x, center.y + crossSize),
+                strokeWidth = 1.5.dp.toPx()
             )
         }
     }

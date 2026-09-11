@@ -215,6 +215,30 @@ class NexusApiClient {
         return result
     }
 
+    fun flushPending(serverIp: String, runtimePort: Int) {
+        scope.launch {
+            val cleanIp = serverIp.trim().removePrefix("http://").removePrefix("https://").removeSuffix("/")
+            val urlStr = "http://$cleanIp:$runtimePort/devices/pending"
+            try {
+                val url = URL(urlStr)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 1500
+                    readTimeout = 1500
+                    setRequestProperty("Content-Type", "application/json")
+                    doOutput = true
+                }
+                val payload = JSONObject().put("device_id", "nexus-voice-tab").toString()
+                conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                conn.responseCode
+                conn.disconnect()
+                Log.d(TAG, "Successfully flushed pending queue on server.")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to flush pending queue: ${e.message}")
+            }
+        }
+    }
+
     fun release() {
         stopPolling()
         activeMessageJob?.cancel()

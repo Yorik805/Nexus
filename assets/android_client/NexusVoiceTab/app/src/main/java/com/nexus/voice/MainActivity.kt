@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity() {
     private var tts: TextToSpeech? = null
     private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var inFlightMessageJob: Job? = null
+    private var pendingRequestText: String? = null
+    private var currentRequestId: Long = 0L
 
     private var uiState by mutableStateOf(VoiceUiState())
 
@@ -151,18 +153,34 @@ class MainActivity : ComponentActivity() {
         // 1. Cut off any active TTS playback immediately
         stopTts()
 
-        // 2. Cut off previous in-flight sending job if user speaks a new command
-        inFlightMessageJob?.cancel()
+        // 2. Check if a previous command was still in flight waiting for response
+        val wasWaiting = inFlightMessageJob?.isActive == true
+        if (wasWaiting) {
+            inFlightMessageJob?.cancel()
+            // Flush server pending queue so stale response is purged
+            apiClient.flushPending(prefs.serverIp, prefs.runtimePort)
+        }
 
-        // 3. Immediately display user's command in the floating dialogue
-        val updatedHistory = listOf(clean) + uiState.transcriptHistory
+        // 3. If previous request was still pending without a reply, REMOVE it from dialogue history
+        val baseHistory = if (wasWaiting && pendingRequestText != null) {
+            uiState.transcriptHistory.filterNot { it == pendingRequestText }
+        } else {
+            uiState.transcriptHistory
+        }
+
+        pendingRequestText = clean
+        val thisRequestId = System.currentTimeMillis()
+        currentRequestId = thisRequestId
+
+        // 4. Put new command into dialogue history
+        val updatedHistory = listOf(clean) + baseHistory
         uiState = uiState.copy(
             currentPartial = "",
             statusMessage = "Sending to Nexus: \"$clean\"…",
             transcriptHistory = updatedHistory.take(8)
         )
 
-        // 4. POST the message to Nexus runtime (/message)
+        // 5. POST the message to Nexus runtime (/message)
         inFlightMessageJob = activityScope.launch {
             val result = apiClient.sendMessage(
                 serverIp = prefs.serverIp,
@@ -170,7 +188,13 @@ class MainActivity : ComponentActivity() {
                 text = clean
             )
 
+            // If a newer command arrived while waiting, ignore this response entirely
+            if (currentRequestId != thisRequestId) return@launch
+
             result.onSuccess { replyText ->
+                if (currentRequestId != thisRequestId) return@launch
+                pendingRequestText = null
+
                 if (replyText.isNotBlank()) {
                     val withReply = listOf(replyText) + uiState.transcriptHistory
                     uiState = uiState.copy(
@@ -182,6 +206,8 @@ class MainActivity : ComponentActivity() {
                     uiState = uiState.copy(statusMessage = "Command executed by Nexus.")
                 }
             }.onFailure { err ->
+                if (currentRequestId != thisRequestId) return@launch
+                pendingRequestText = null
                 Log.w(TAG, "Failed to reach Nexus server", err)
                 uiState = uiState.copy(
                     statusMessage = "Server error: ${err.localizedMessage ?: "Unreachable"}"

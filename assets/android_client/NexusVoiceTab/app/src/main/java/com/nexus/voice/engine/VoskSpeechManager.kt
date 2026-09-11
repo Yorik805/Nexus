@@ -266,8 +266,14 @@ class VoskSpeechManager(
             val wake = WakeWordDetector.detect(partial)
             if (wake.isDetected) {
                 isArmed = true
+                com.nexus.voice.audio.SciFiSoundEffect.playWakeChime()
                 startSilenceTimer()
-                onStateChanged(VoiceState.LISTENING, "Listening to you…")
+                onStateChanged(VoiceState.WAKE_DETECTED, "Wake Word Detected!")
+                mainHandler.postDelayed({
+                    if (isArmed) {
+                        onStateChanged(VoiceState.LISTENING, "Listening to you…")
+                    }
+                }, 350L)
                 if (wake.trailingCommand.isNotBlank()) {
                     onPartialTranscript(wake.trailingCommand)
                 } else {
@@ -277,7 +283,9 @@ class VoskSpeechManager(
         } else {
             startSilenceTimer()
             val clean = WakeWordDetector.stripWakeWord(partial)
-            onPartialTranscript(clean)
+            if (clean.isNotBlank()) {
+                onPartialTranscript(clean)
+            }
         }
     }
 
@@ -288,17 +296,22 @@ class VoskSpeechManager(
         onRawTranscript(text)
 
         if (isArmed) {
-            cancelSilenceTimer()
-            isArmed = false
             val clean = WakeWordDetector.stripWakeWord(text)
-            if (clean.length >= 2) {
+            if (clean.isNotBlank() && clean.length >= 2) {
+                cancelSilenceTimer()
+                isArmed = false
                 onFinalTranscript(clean)
+                onPartialTranscript("")
+                onStateChanged(VoiceState.STANDBY, "Standby. Say 'Hey Nexus' or 'Hi Acces'")
+            } else {
+                // User paused after saying wake word; DO NOT disarm, keep listening for actual command
+                startSilenceTimer()
+                onStateChanged(VoiceState.LISTENING, "Listening to your command…")
             }
-            onPartialTranscript("")
-            onStateChanged(VoiceState.STANDBY, "Standby. Say 'Hey Nexus' or 'Hi Acces'")
         } else {
             val wake = WakeWordDetector.detect(text)
             if (wake.isDetected) {
+                com.nexus.voice.audio.SciFiSoundEffect.playWakeChime()
                 if (wake.trailingCommand.isNotBlank()) {
                     onFinalTranscript(wake.trailingCommand)
                     onPartialTranscript("")
@@ -306,7 +319,12 @@ class VoskSpeechManager(
                 } else {
                     isArmed = true
                     startSilenceTimer()
-                    onStateChanged(VoiceState.LISTENING, "Listening to you…")
+                    onStateChanged(VoiceState.WAKE_DETECTED, "Wake Word Detected!")
+                    mainHandler.postDelayed({
+                        if (isArmed) {
+                            onStateChanged(VoiceState.LISTENING, "Listening to you…")
+                        }
+                    }, 350L)
                     onPartialTranscript("Listening…")
                 }
             }
