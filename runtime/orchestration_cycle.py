@@ -32,6 +32,7 @@ class OrchestrationCycle:
         config: OrchestrationCycleConfig | None = None,
         context_builder: Callable[..., dict[str, Any]] | None = None,
         trace: RuntimeTrace | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self.orchestrator = orchestrator
         self.validator = validator
@@ -39,6 +40,8 @@ class OrchestrationCycle:
         self.config = config or OrchestrationCycleConfig()
         self.context_builder = context_builder
         self.trace = trace
+        self.cancel_check = cancel_check
+        self._is_cancelled = False
         if self.config.max_iterations < 1:
             raise ValueError("max_iterations must be at least 1.")
         if self.config.repeated_plan_limit < 1:
@@ -47,6 +50,16 @@ class OrchestrationCycle:
             raise ValueError("max_history_entries must be at least 1.")
         if self.config.recent_history_limit < 1 or self.config.emergency_iteration_limit < 1:
             raise ValueError("history and emergency limits must be at least 1.")
+
+    def cancel(self) -> None:
+        self._is_cancelled = True
+
+    def is_cancelled(self) -> bool:
+        if self._is_cancelled:
+            return True
+        if self.cancel_check is not None and self.cancel_check():
+            return True
+        return False
 
     def run(
         self,
@@ -69,6 +82,10 @@ class OrchestrationCycle:
 
         for iteration in range(1, min(self.config.max_iterations, self.config.emergency_iteration_limit) + 1):
             iterations = iteration
+            if self.is_cancelled():
+                termination_reason = "CANCELLED"
+                status = "CANCELLED"
+                break
             if self.trace:
                 self.trace.record("iteration.start", initial_context.event.get("event_id"), iteration=iteration, history_count=len(history_manager.records()))
             if self.context_builder is not None:
@@ -105,6 +122,10 @@ class OrchestrationCycle:
                     metadata={"error": str(exc)},
                     error={"code": "ORCHESTRATOR_ERROR", "message": str(exc)},
                 )
+            if self.is_cancelled():
+                termination_reason = "CANCELLED"
+                status = "CANCELLED"
+                break
             if self.trace:
                 self.trace.record("orchestrator.decision", initial_context.event.get("event_id"), iteration=iteration, decision=orchestrator_result.decision, complete=orchestrator_result.complete, action_count=len(orchestrator_result.actions))
 
@@ -189,6 +210,19 @@ class OrchestrationCycle:
         else:
             termination_reason = "LIMIT_REACHED"
             status = "LIMIT_REACHED"
+
+        if status == "CANCELLED":
+            return {
+                "event_id": initial_context.event.get("event_id"),
+                "status": "CANCELLED",
+                "termination_reason": "CANCELLED",
+                "iterations": iterations,
+                "history": list(initial_history or []),
+                "orchestrator_result": {},
+                "validation_result": {},
+                "execution_results": [],
+                "response": {"required": False, "text": ""},
+            }
 
         latest = history[-1] if history else {
             "orchestrator_result": {},

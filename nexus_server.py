@@ -233,15 +233,46 @@ class NexusRequestHandler(BaseHTTPRequestHandler):
                 if not device_id:
                     self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
                     return
+                cancel_in_flight = bool(payload.get("cancel_in_flight", False))
+                if cancel_in_flight:
+                    self.server.runtime.cancel_source(str(device_id))
+                    self.server.runtime.purge_last_history(str(device_id))
                 store = get_device_store()
                 pending = store.get_pending_messages(device_id, consume=True)
                 result = {"status": "SUCCESS", "pending": pending, "device_id": device_id}
                 print(f"[NEXUS:http] Response sent for /devices/pending")
+            elif self.path in ("/devices/cancel", "/message/cancel"):
+                device_id = str(payload.get("device_id") or "").strip()
+                if not device_id:
+                    self._write_json(400, {"status": "ERROR", "message": "device_id is required."})
+                    return
+                cancelled = self.server.runtime.cancel_source(device_id)
+                purged = self.server.runtime.purge_last_history(device_id)
+                store = get_device_store()
+                store.get_pending_messages(device_id, consume=True)
+                manager = get_device_communication_manager()
+                manager.flush_pending(device_id)
+                result = {
+                    "status": "SUCCESS",
+                    "device_id": device_id,
+                    "cancelled": cancelled,
+                    "purged_history": purged,
+                }
+                print(f"[NEXUS:http] Cancelled request for {device_id} (cancelled={cancelled}, purged={purged})")
             elif self.path == "/message":
                 text = payload.get("text")
-                device_id = payload.get("device_id", "http-client")
+                device_id = str(payload.get("device_id", "http-client")).strip()
+                cancel_previous = bool(payload.get("cancel_previous", False))
                 if not isinstance(text, str) or not text.strip():
                     raise ValueError("text must be a non-empty string.")
+                
+                # If requested or if same source is already active, cancel previous in-flight request and purge history
+                if cancel_previous or self.server.runtime.has_active_event_from(device_id):
+                    print(f"[NEXUS:http] Cancelling previous active request for {device_id}...")
+                    self.server.runtime.cancel_source(device_id)
+                    self.server.runtime.purge_last_history(device_id)
+                    store = get_device_store()
+                    store.get_pending_messages(device_id, consume=True)
                 
                 # Store device if not already known
                 store = get_device_store()

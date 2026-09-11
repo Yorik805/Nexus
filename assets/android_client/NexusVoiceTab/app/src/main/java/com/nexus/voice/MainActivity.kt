@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.nexus.voice.config.NexusPreferences
 import com.nexus.voice.engine.VoskSpeechManager
+import com.nexus.voice.model.TranscriptEntry
 import com.nexus.voice.network.NexusApiClient
 import com.nexus.voice.state.VoiceState
 import com.nexus.voice.state.VoiceUiState
@@ -157,13 +158,14 @@ class MainActivity : ComponentActivity() {
         val wasWaiting = inFlightMessageJob?.isActive == true
         if (wasWaiting) {
             inFlightMessageJob?.cancel()
-            // Flush server pending queue so stale response is purged
+            // Abort server inference & purge history on Nexus backend
+            apiClient.cancelRequest(prefs.serverIp, prefs.runtimePort)
             apiClient.flushPending(prefs.serverIp, prefs.runtimePort)
         }
 
         // 3. If previous request was still pending without a reply, REMOVE it from dialogue history
         val baseHistory = if (wasWaiting && pendingRequestText != null) {
-            uiState.transcriptHistory.filterNot { it == pendingRequestText }
+            uiState.transcriptHistory.filterNot { it.isUser && it.text == pendingRequestText }
         } else {
             uiState.transcriptHistory
         }
@@ -172,20 +174,22 @@ class MainActivity : ComponentActivity() {
         val thisRequestId = System.currentTimeMillis()
         currentRequestId = thisRequestId
 
-        // 4. Put new command into dialogue history
-        val updatedHistory = listOf(clean) + baseHistory
+        // 4. Put new command into dialogue history as a user entry
+        val userEntry = TranscriptEntry(text = clean, isUser = true)
+        val updatedHistory = listOf(userEntry) + baseHistory
         uiState = uiState.copy(
             currentPartial = "",
             statusMessage = "Sending to Nexus: \"$clean\"…",
             transcriptHistory = updatedHistory.take(8)
         )
 
-        // 5. POST the message to Nexus runtime (/message)
+        // 5. POST the message to Nexus runtime (/message) with cancelPrevious = wasWaiting
         inFlightMessageJob = activityScope.launch {
             val result = apiClient.sendMessage(
                 serverIp = prefs.serverIp,
                 runtimePort = prefs.runtimePort,
-                text = clean
+                text = clean,
+                cancelPrevious = wasWaiting
             )
 
             // If a newer command arrived while waiting, ignore this response entirely
@@ -196,7 +200,8 @@ class MainActivity : ComponentActivity() {
                 pendingRequestText = null
 
                 if (replyText.isNotBlank()) {
-                    val withReply = listOf(replyText) + uiState.transcriptHistory
+                    val replyEntry = TranscriptEntry(text = replyText, isUser = false)
+                    val withReply = listOf(replyEntry) + uiState.transcriptHistory
                     uiState = uiState.copy(
                         statusMessage = "Nexus responded.",
                         transcriptHistory = withReply.take(8)

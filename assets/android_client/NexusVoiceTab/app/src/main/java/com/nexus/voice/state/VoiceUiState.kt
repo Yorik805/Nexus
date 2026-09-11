@@ -3,6 +3,7 @@ package com.nexus.voice.state
 import com.nexus.voice.model.BackgroundTaskItem
 import com.nexus.voice.model.EventCategory
 import com.nexus.voice.model.NexusEvent
+import com.nexus.voice.model.TranscriptEntry
 
 enum class VoiceState {
     INITIALIZING,
@@ -16,7 +17,7 @@ data class VoiceUiState(
     val voiceState: VoiceState = VoiceState.INITIALIZING,
     val currentPartial: String = "",
     val rawTranscript: String = "",
-    val transcriptHistory: List<String> = emptyList(),
+    val transcriptHistory: List<TranscriptEntry> = emptyList(),
     val statusMessage: String = "Initializing Vosk Engine…",
     val isMicActive: Boolean = false,
     val audioLevel: Float = 0f, // 0.0f to 1.0f sound reactive amplitude

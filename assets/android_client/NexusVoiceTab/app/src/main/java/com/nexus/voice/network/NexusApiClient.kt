@@ -88,10 +88,12 @@ class NexusApiClient {
         serverIp: String,
         runtimePort: Int,
         text: String,
-        deviceId: String = "nexus-voice-tab"
+        deviceId: String = "nexus-voice-tab",
+        cancelPrevious: Boolean = false
     ): Result<String> = withContext(Dispatchers.IO) {
-        // Cut off previous in-flight request if a new one is sent
-        activeMessageJob?.cancel()
+        if (serverIp.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("Server IP is empty."))
+        }
 
         val cleanIp = serverIp.trim().removePrefix("http://").removePrefix("https://").removeSuffix("/")
         val urlStr = "http://$cleanIp:$runtimePort/message"
@@ -102,6 +104,9 @@ class NexusApiClient {
             val jsonPayload = JSONObject().apply {
                 put("device_id", deviceId)
                 put("text", text)
+                if (cancelPrevious) {
+                    put("cancel_previous", true)
+                }
             }.toString()
 
             Log.d(TAG, "Sending message to $urlStr: $text")
@@ -235,6 +240,30 @@ class NexusApiClient {
                 Log.d(TAG, "Successfully flushed pending queue on server.")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to flush pending queue: ${e.message}")
+            }
+        }
+    }
+
+    fun cancelRequest(serverIp: String, runtimePort: Int, deviceId: String = "nexus-voice-tab") {
+        scope.launch {
+            val cleanIp = serverIp.trim().removePrefix("http://").removePrefix("https://").removeSuffix("/")
+            val urlStr = "http://$cleanIp:$runtimePort/devices/cancel"
+            try {
+                val url = URL(urlStr)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 1500
+                    readTimeout = 1500
+                    setRequestProperty("Content-Type", "application/json")
+                    doOutput = true
+                }
+                val payload = JSONObject().put("device_id", deviceId).toString()
+                conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                conn.responseCode
+                conn.disconnect()
+                Log.d(TAG, "Successfully sent cancellation request for $deviceId")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to cancel request on server: ${e.message}")
             }
         }
     }

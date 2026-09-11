@@ -177,3 +177,52 @@ def test_runtime_preserves_conversation_history_per_source() -> None:
     history = second_context.working_context["execution_history"]
     assert history
     assert history[0]["event"]["data"]["text"] == "set a timer"
+
+
+def test_runtime_purge_last_history() -> None:
+    runtime = NexusRuntime(orchestrator=DummyOrchestrator())
+    runtime.start()
+    try:
+        runtime.submit_event({"type": "USER_MESSAGE", "source": "tab_1", "data": {"text": "first message"}})
+        runtime.submit_event({"type": "USER_MESSAGE", "source": "tab_1", "data": {"text": "second message"}})
+        assert len(runtime._conversation_history.get("tab_1", [])) >= 2
+
+        # Purge the last interaction (second message)
+        purged = runtime.purge_last_history("tab_1")
+        assert purged is True
+        history = runtime._conversation_history.get("tab_1", [])
+        assert len(history) == 1
+        assert history[0]["event"]["data"]["text"] == "first message"
+    finally:
+        runtime.stop()
+
+
+def test_runtime_cancellation_omits_from_conversation_history() -> None:
+    received_contexts: list[object] = []
+
+    class SlowOrchestrator(DummyOrchestrator):
+        def process(self, context):
+            received_contexts.append(context)
+            time.sleep(0.1)
+            return super().process(context)
+
+    runtime = NexusRuntime(orchestrator=SlowOrchestrator())
+    runtime.start()
+    try:
+        # Submit first message
+        runtime.submit_event({"type": "USER_MESSAGE", "source": "tab_1", "data": {"text": "command 1"}})
+        assert len(runtime._conversation_history.get("tab_1", [])) == 1
+
+        # Purge command 1 as if superseded
+        runtime.purge_last_history("tab_1")
+        assert len(runtime._conversation_history.get("tab_1", [])) == 0
+
+        # Submit command 2
+        runtime.submit_event({"type": "USER_MESSAGE", "source": "tab_1", "data": {"text": "command 2"}})
+        
+        # In second context, execution_history must NOT have command 1
+        second_context = received_contexts[-1]
+        assert second_context.working_context["execution_history"] == []
+    finally:
+        runtime.stop()
+

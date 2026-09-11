@@ -393,6 +393,9 @@ class NexusRuntime:
         self._lock = threading.Lock()
         self._future_map: dict[str, Future] = {}
         self._conversation_history: dict[str, list[dict[str, Any]]] = {}
+        self._cancelled_event_ids: set[str] = set()
+        self._active_cycle: OrchestrationCycle | None = None
+        self._active_event: Event | None = None
         self.trace = RuntimeTrace(log_path)
         self.device_communication_manager = get_device_communication_manager()
         self.context_builder_enabled = (
@@ -479,6 +482,20 @@ class NexusRuntime:
         self.shutdown_complete = True
 
     def _process_event(self, event: Event) -> dict[str, Any]:
+        with self._lock:
+            if event.event_id in self._cancelled_event_ids:
+                return {
+                    "event_id": event.event_id,
+                    "status": "CANCELLED",
+                    "termination_reason": "CANCELLED",
+                    "iterations": 0,
+                    "history": [],
+                    "orchestrator_result": {},
+                    "validation_result": {},
+                    "execution_results": [],
+                    "response": {"required": False, "text": ""},
+                }
+
         self.trace.record("cycle.start", event.event_id, event_type=event.type)
         context = OrchestratorContext(
             event=event.to_dict(),
@@ -491,15 +508,77 @@ class NexusRuntime:
             self.cycle_config,
             context_builder=self.context_builder.build if self.context_builder is not None else None,
             trace=self.trace,
+            cancel_check=lambda: event.event_id in self._cancelled_event_ids,
         )
         conversation_key = event.source.strip() or "unknown"
         with self._lock:
+            self._active_cycle = cycle
+            self._active_event = event
             initial_history = list(self._conversation_history.get(conversation_key, []))
-        result = cycle.run(context, initial_history=initial_history)
+
+        try:
+            result = cycle.run(context, initial_history=initial_history)
+        finally:
+            with self._lock:
+                if self._active_event is event:
+                    self._active_cycle = None
+                    self._active_event = None
+
         with self._lock:
-            self._conversation_history[conversation_key] = list(result.get("history", []))[-50:]
+            is_cancelled = (
+                event.event_id in self._cancelled_event_ids
+                or result.get("status") == "CANCELLED"
+            )
+            if not is_cancelled:
+                self._conversation_history[conversation_key] = list(result.get("history", []))[-50:]
+            else:
+                self._cancelled_event_ids.discard(event.event_id)
+
         self.trace.record("cycle.complete", event.event_id, status=result.get("status"), termination_reason=result.get("termination_reason"), iterations=result.get("iterations"))
         return result
+
+    def has_active_event_from(self, source: str) -> bool:
+        """Return True if an event from this source is currently executing."""
+        key = source.strip() or "unknown"
+        with self._lock:
+            return (
+                self._active_event is not None
+                and self._active_event.source.strip() == key
+            )
+
+    def cancel_source(self, source: str) -> bool:
+        """Cancel any active cycle from source and mark pending queue items as cancelled."""
+        key = source.strip() or "unknown"
+        cancelled = False
+        with self._lock:
+            if self._active_event is not None and (self._active_event.source.strip() == key):
+                self._cancelled_event_ids.add(self._active_event.event_id)
+                if self._active_cycle is not None:
+                    self._active_cycle.cancel()
+                cancelled = True
+        return cancelled
+
+    def purge_last_history(self, source: str, event_id: str | None = None) -> bool:
+        """Remove the most recent event (or specific event) from LLM conversation history."""
+        key = source.strip() or "unknown"
+        with self._lock:
+            records = self._conversation_history.get(key)
+            if not records:
+                return False
+
+            target_id = event_id
+            if target_id is None:
+                last_record = records[-1]
+                target_id = last_record.get("event", {}).get("event_id")
+
+            if not target_id:
+                records.pop()
+                return True
+
+            filtered = [r for r in records if r.get("event", {}).get("event_id") != target_id]
+            removed = len(filtered) < len(records)
+            self._conversation_history[key] = filtered
+            return removed
 
     def stop(self) -> None:
         if not self.is_running:
